@@ -257,6 +257,14 @@
     return getAllCharacters().find((c) => c.id === id) || BUILTIN_CHARACTERS[0];
   }
 
+  // 当前正在聊的角色（基于 state.currentCharacterId）
+  // 在 renderMessages / buildMessageNode / callRealAI 等多处被调用
+  // 之前漏定义，导致 init() 在 renderMessages 抛 ReferenceError，
+  // → enterHomeView / renderHome 没机会跑 → 主页一片空白
+  function getCurrentCharacter() {
+    return getCharacterById(state.currentCharacterId);
+  }
+
   function upsertCharacter(c) {
     const custom = loadCharacters();
     const idx = custom.findIndex((x) => x.id === c.id);
