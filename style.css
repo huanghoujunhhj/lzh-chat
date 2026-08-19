@@ -643,8 +643,8 @@ textarea {
 }
 
 .msg-row.user .msg-bubble {
-  background: linear-gradient(135deg, var(--user-accent) 0%, var(--user-accent-2) 100%);
-  color: #fff;
+  background: #9DF29F;
+  color: #1a3a1a;
   border-bottom-right-radius: 4px;
 }
 
