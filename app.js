@@ -11,8 +11,10 @@
    * ============================================ */
   const STORAGE_KEY = 'chat-sessions-lzh';
   const SETTINGS_KEY = 'chat-settings-lzh';
+  const CHARACTERS_KEY = 'chat-characters-lzh';
+  const ACTIVE_CHAR_KEY = 'chat-active-character-lzh';
   const TITLE_MAX = 15;
-  const DEFAULT_SYSTEM_PROMPT = `你是刘梓菡，一个初二升初三的初中女生，数学课代表。
+  const DEFAULT_LZH_PERSONA = `你是刘梓菡，一个初二升初三的初中女生，数学课代表。
 
 【性格】
 - 外人面前内向，朋友面前外向
@@ -33,6 +35,20 @@
 - 可以用括号（动作）来描述你当下的神态、动作或小表情，例如（翻了个白眼）滚！、（拿起笔算了算）这题先移项就行。
 - 语气词不多，保持那种漫不经心又有点敷衍的感觉；聊正事时认真、话会变多。
 - 不要用"我是AI""作为助手"这类话开头。`;
+  const DEFAULT_SYSTEM_PROMPT = DEFAULT_LZH_PERSONA;
+
+  // 内置角色（不可删除；用户创建的角色在 localStorage 中）
+  const BUILTIN_CHARACTERS = [
+    {
+      id: 'lzh',
+      name: '刘梓菡',
+      tagline: '数学课代表',
+      avatar: 'assets/avatar-lzh.jpg',
+      persona: DEFAULT_LZH_PERSONA,
+      greeting: '（抬头瞥了你一眼）嗯？找我什么事啊，说吧。',
+      builtIn: true,
+    },
+  ];
 
   const DEFAULT_SETTINGS = {
     useRealAi: false,
@@ -127,6 +143,11 @@
       .replace(/'/g, '&#39;');
   }
 
+  // HTML 属性转义（src/href/alt 等）
+  function escapeAttr(str) {
+    return escapeHtml(str);
+  }
+
   function formatTime(ts) {
     const d = new Date(ts);
     const pad = (n) => String(n).padStart(2, '0');
@@ -158,6 +179,14 @@
       if (!raw) return null;
       const data = JSON.parse(raw);
       if (!data || !Array.isArray(data.sessions)) return null;
+      // 数据迁移：旧 session 没 characterId → 默认 lzh
+      let needMigrate = false;
+      data.sessions.forEach((s) => {
+        if (!s.characterId) { s.characterId = BUILTIN_CHARACTERS[0].id; needMigrate = true; }
+      });
+      if (needMigrate) {
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch (e) {}
+      }
       return data;
     } catch (e) {
       console.warn('读取会话失败：', e);
@@ -193,29 +222,110 @@
   }
 
   /* ============================================
+   * 角色（分身）管理
+   * ============================================ */
+  function loadCharacters() {
+    try {
+      const raw = localStorage.getItem(CHARACTERS_KEY);
+      if (!raw) return [];
+      const arr = JSON.parse(raw);
+      if (!Array.isArray(arr)) return [];
+      return arr;
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function saveCharacters(arr) {
+    try {
+      localStorage.setItem(CHARACTERS_KEY, JSON.stringify(arr));
+    } catch (e) {
+      console.warn('保存角色失败：', e);
+    }
+  }
+
+  function getAllCharacters() {
+    const custom = loadCharacters();
+    const map = {};
+    BUILTIN_CHARACTERS.forEach((c) => { map[c.id] = c; });
+    custom.forEach((c) => { if (c && c.id) map[c.id] = c; });
+    return Object.values(map);
+  }
+
+  function getCharacterById(id) {
+    if (!id) return BUILTIN_CHARACTERS[0];
+    return getAllCharacters().find((c) => c.id === id) || BUILTIN_CHARACTERS[0];
+  }
+
+  function upsertCharacter(c) {
+    const custom = loadCharacters();
+    const idx = custom.findIndex((x) => x.id === c.id);
+    if (idx >= 0) custom[idx] = c; else custom.push(c);
+    saveCharacters(custom);
+  }
+
+  function deleteCharacter(id) {
+    if (BUILTIN_CHARACTERS.find((c) => c.id === id)) return false;
+    const custom = loadCharacters();
+    saveCharacters(custom.filter((c) => c.id !== id));
+    // 删除该角色的所有会话
+    state.sessions = state.sessions.filter((s) => s.characterId !== id);
+    if (state.currentCharacterId === id) {
+      state.currentCharacterId = BUILTIN_CHARACTERS[0].id;
+    }
+    persist();
+    return true;
+  }
+
+  function countSessionsByCharacter(cid) {
+    return state.sessions.filter((s) => s.characterId === cid).length;
+  }
+
+  function loadActiveCharacter() {
+    try {
+      const id = localStorage.getItem(ACTIVE_CHAR_KEY);
+      return getCharacterById(id).id;
+    } catch (e) {
+      return BUILTIN_CHARACTERS[0].id;
+    }
+  }
+
+  function saveActiveCharacter(id) {
+    try { localStorage.setItem(ACTIVE_CHAR_KEY, id); } catch (e) {}
+  }
+
+  /* ============================================
    * 会话管理
    * ============================================ */
   let state = {
     currentSessionId: null,
+    currentCharacterId: BUILTIN_CHARACTERS[0].id,
+    view: 'home', // 'home' | 'chat'
     sessions: [],
   };
 
   function ensureCurrentSession() {
-    if (state.sessions.length === 0) {
+    // 过滤掉不属于当前角色的会话（切换角色时）
+    const cid = state.currentCharacterId;
+    const own = state.sessions.filter((s) => (s.characterId || 'lzh') === cid);
+    if (own.length === 0) {
       createSession();
       return;
     }
     if (
       !state.currentSessionId ||
-      !state.sessions.find((s) => s.id === state.currentSessionId)
+      !own.find((s) => s.id === state.currentSessionId)
     ) {
-      state.currentSessionId = state.sessions[0].id;
+      state.currentSessionId = own[0].id;
     }
   }
 
-  function createSession() {
+  function createSession(opts) {
+    opts = opts || {};
+    const cid = opts.characterId || state.currentCharacterId || BUILTIN_CHARACTERS[0].id;
     const session = {
       id: uid(),
+      characterId: cid,
       title: '新会话',
       createdAt: now(),
       updatedAt: now(),
@@ -230,23 +340,25 @@
   function deleteSession(id) {
     const idx = state.sessions.findIndex((s) => s.id === id);
     if (idx === -1) return;
+    const cid = state.sessions[idx].characterId || BUILTIN_CHARACTERS[0].id;
     state.sessions.splice(idx, 1);
 
     if (state.currentSessionId === id) {
-      if (state.sessions.length > 0) {
-        // 切换到相邻的会话（删除位置之后的优先，没有则取前一个）
-        const next = state.sessions[idx] || state.sessions[idx - 1];
-        state.currentSessionId = next ? next.id : null;
+      // 找一个属于同一角色的相邻会话
+      const sameCid = state.sessions.filter((s) => (s.characterId || BUILTIN_CHARACTERS[0].id) === cid);
+      if (sameCid.length > 0) {
+        state.currentSessionId = sameCid[0].id;
       } else {
-        // 删完最后一个 → 自动新建
+        // 当前角色没会话了 → 自动新建一个
         const newSession = {
           id: uid(),
+          characterId: cid,
           title: '新会话',
           createdAt: now(),
           updatedAt: now(),
           messages: [],
         };
-        state.sessions.push(newSession);
+        state.sessions.unshift(newSession);
         state.currentSessionId = newSession.id;
       }
     }
@@ -303,12 +415,16 @@
   function renderAll() {
     renderSessionList();
     renderMessages();
+    renderCharacterHeader();
   }
 
   function renderSessionList() {
     const list = $('sessionList');
     list.innerHTML = '';
-    state.sessions.forEach((s) => {
+    const cid = state.currentCharacterId;
+    // 只显示当前角色的会话
+    const own = state.sessions.filter((s) => (s.characterId || BUILTIN_CHARACTERS[0].id) === cid);
+    own.forEach((s) => {
       const item = document.createElement('div');
       item.className = 'session-item' + (s.id === state.currentSessionId ? ' active' : '');
       item.setAttribute('role', 'listitem');
@@ -352,6 +468,12 @@
       item.addEventListener('click', () => switchSession(s.id));
       list.appendChild(item);
     });
+    if (own.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'session-empty';
+      empty.textContent = '还没有会话，点上方新建';
+      list.appendChild(empty);
+    }
   }
 
   function renderMessages() {
@@ -360,11 +482,12 @@
     wrap.innerHTML = '';
 
     if (!session || session.messages.length === 0) {
+      const c = getCurrentCharacter();
       const empty = document.createElement('div');
       empty.className = 'empty-state';
       empty.innerHTML = `
-        <div class="empty-icon">🌸</div>
-        <div class="empty-title">开始聊天吧～</div>
+        <img class="msg-avatar" id="emptyAvatar" alt="" src="${escapeAttr(c.avatar || '')}" style="width:64px;height:64px;margin:0 auto 14px;" onerror="this.style.display='none'" />
+        <div class="empty-title">${escapeHtml(c.name)} 在线</div>
         <div class="empty-sub">问点数学题、聊聊排球，或者随便说点什么</div>
         <div class="empty-chips" id="emptyChips"></div>
       `;
@@ -384,8 +507,19 @@
     row.className = 'msg-row ' + (m.role === 'user' ? 'user' : 'bot');
 
     const avatar = document.createElement('div');
-    avatar.className = 'msg-avatar ' + (m.role === 'user' ? 'user' : 'bot');
-    avatar.textContent = m.role === 'user' ? '我' : '菡';
+    avatar.className = 'msg-avatar-wrap';
+    if (m.role === 'user') {
+      avatar.classList.add('msg-avatar', 'user');
+      avatar.textContent = '我';
+    } else {
+      const c = getCurrentCharacter();
+      const img = document.createElement('img');
+      img.className = 'msg-avatar';
+      img.alt = c.name;
+      img.src = c.avatar || '';
+      img.onerror = function () { this.replaceWith(Object.assign(document.createElement('div'), { className: 'msg-avatar bot', textContent: (c.name||'TA').slice(0,1) })); };
+      avatar.appendChild(img);
+    }
 
     const bubble = document.createElement('div');
     bubble.className = 'msg-bubble';
@@ -401,8 +535,14 @@
     row.className = 'msg-row bot';
     row.dataset.typing = '1';
     const avatar = document.createElement('div');
-    avatar.className = 'msg-avatar bot';
-    avatar.textContent = '菡';
+    avatar.className = 'msg-avatar-wrap';
+    const c = getCurrentCharacter();
+    const img = document.createElement('img');
+    img.className = 'msg-avatar';
+    img.alt = c.name;
+    img.src = c.avatar || '';
+    img.onerror = function () { this.replaceWith(Object.assign(document.createElement('div'), { className: 'msg-avatar bot', textContent: (c.name||'TA').slice(0,1) })); };
+    avatar.appendChild(img);
     const bubble = document.createElement('div');
     bubble.className = 'msg-bubble';
     bubble.innerHTML =
@@ -527,10 +667,15 @@
    * ============================================ */
   async function callRealAI(settings, messages) {
     const url = settings.baseUrl.replace(/\/+$/, '') + '/chat/completions';
+    // 优先用当前角色的人设，其次 settings 里手动保存的，最后才是默认
+    const persona = getCurrentCharacter().persona || DEFAULT_SYSTEM_PROMPT;
+    const sys = settings.systemPrompt && settings.systemPrompt !== DEFAULT_SYSTEM_PROMPT
+      ? settings.systemPrompt
+      : persona;
     const payload = {
       model: settings.model,
       messages: [
-        { role: 'system', content: settings.systemPrompt || DEFAULT_SYSTEM_PROMPT },
+        { role: 'system', content: sys },
         ...messages.map((m) => ({ role: m.role, content: m.content })),
       ],
       temperature: 0.85,
@@ -921,11 +1066,14 @@
    * ============================================ */
   function openSettings() {
     const s = loadSettings();
+    const c = getCurrentCharacter();
     $('useRealAiToggle').checked = !!s.useRealAi;
     $('baseUrlInput').value = s.baseUrl || '';
     $('apiKeyInput').value = s.apiKey || '';
     $('modelInput').value = s.model || '';
-    $('systemPromptInput').value = s.systemPrompt || DEFAULT_SYSTEM_PROMPT;
+    // 默认显示当前角色人设；若用户曾保存过自定义 prompt 且不是默认，则用用户自定义的
+    const isDefaultPrompt = !s.systemPrompt || s.systemPrompt === DEFAULT_SYSTEM_PROMPT;
+    $('systemPromptInput').value = (isDefaultPrompt ? c.persona : s.systemPrompt) || DEFAULT_SYSTEM_PROMPT;
     renderPresetChips(s.baseUrl, s.model);
     updateAiSettingsVisibility();
     $('settingsModal').hidden = false;
@@ -1042,10 +1190,21 @@
     if (loaded) {
       state = loaded;
     }
+    // 加载活跃角色（用户上次在的角色）
+    state.currentCharacterId = loadActiveCharacter();
+    // 若 state.view 没初始化过，默认进入 chat（保持上次的对话）
+    if (!state.view) state.view = 'chat';
     ensureCurrentSession();
 
     // 渲染
     renderAll();
+
+    // 视图
+    if (state.view === 'home') {
+      enterHomeView(false);
+    } else {
+      enterChatView();
+    }
 
     // 事件绑定
     $('newChatBtn').addEventListener('click', () => {
@@ -1078,15 +1237,24 @@
     });
     $('testConnectionBtn').addEventListener('click', testConnection);
     $('clearAllInSettingsBtn').addEventListener('click', () => {
-      if (state.sessions.length === 0) {
-        alert('没有对话可以清空');
+      if (countSessionsByCharacter(state.currentCharacterId) === 0) {
+        alert('当前角色还没有对话可以清空');
         return;
       }
-      if (confirm('确定清空所有对话？此操作不可恢复。')) {
-        clearAllSessions();
+      if (confirm('确定清空当前角色的所有对话？此操作不可恢复。')) {
+        clearCurrentCharacterSessions();
         closeSettings();
       }
     });
+
+    // 主页 / 返回主页 / 创建分身事件
+    $('homeBackBtn').addEventListener('click', () => enterHomeView(true));
+    $('backHomeBtn').addEventListener('click', () => enterHomeView(true));
+    $('closeCharacterBtn').addEventListener('click', closeCharacterModal);
+    $('characterBackdrop').addEventListener('click', closeCharacterModal);
+    $('saveCharacterBtn').addEventListener('click', saveCharacterFromForm);
+    $('deleteCharacterBtn').addEventListener('click', deleteCharacterFromForm);
+    $('charAvatarInput').addEventListener('change', handleAvatarFile);
 
     // 输入框
     const input = $('input');
@@ -1105,6 +1273,235 @@
     // 初始按钮状态
     updateSendButton();
     input.focus();
+  }
+
+  /* ============================================
+   * 视图切换（主页 / 聊天）
+   * ============================================ */
+  function renderCharacterHeader() {
+    const c = getCurrentCharacter();
+    const av1 = $('brandAvatar');
+    const av2 = $('topbarAvatar');
+    const fallbackChar = (c.name || 'TA').slice(0, 1);
+    if (av1) {
+      av1.src = c.avatar || '';
+      av1.alt = c.name || '';
+      av1.onerror = function () {
+        const d = document.createElement('div');
+        d.className = 'brand-avatar';
+        d.textContent = fallbackChar;
+        this.replaceWith(d);
+      };
+    }
+    if (av2) {
+      av2.src = c.avatar || '';
+      av2.alt = c.name || '';
+      av2.onerror = function () {
+        const d = document.createElement('div');
+        d.className = 'topbar-avatar';
+        d.textContent = fallbackChar;
+        this.replaceWith(d);
+      };
+    }
+    const t1 = $('brandTitle'); if (t1) t1.textContent = c.name || '分身';
+    const t2 = $('brandSub'); if (t2) t2.textContent = c.tagline || '';
+    const t3 = $('topbarName'); if (t3) t3.textContent = c.name || '分身';
+  }
+
+  function enterHomeView(persist) {
+    state.view = 'home';
+    document.body.classList.remove('view-chat');
+    document.body.classList.add('view-home');
+    renderHome();
+    if (persist !== false) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {} }
+  }
+
+  function enterChatView() {
+    state.view = 'chat';
+    document.body.classList.remove('view-home');
+    document.body.classList.add('view-chat');
+    ensureCurrentSession();
+    renderAll();
+    setTimeout(() => { const i = $('input'); if (i) i.focus(); }, 50);
+  }
+
+  function renderHome() {
+    const grid = $('characterGrid');
+    if (!grid) return;
+    const all = getAllCharacters();
+    grid.innerHTML = '';
+    // 内置排前 + 用户角色按 createdAt
+    const sorted = all.slice().sort((a, b) => {
+      if (a.builtIn && !b.builtIn) return -1;
+      if (!a.builtIn && b.builtIn) return 1;
+      return 0;
+    });
+    sorted.forEach((c) => {
+      const card = document.createElement('div');
+      card.className = 'character-card';
+      card.dataset.id = c.id;
+      const count = countSessionsByCharacter(c.id);
+      card.innerHTML = `
+        <img class="char-card-avatar" alt="" src="${escapeAttr(c.avatar || '')}" onerror="this.style.opacity=0.3" />
+        <div class="char-card-name">${escapeHtml(c.name || '未命名')}</div>
+        <div class="char-card-tag">${escapeHtml(c.tagline || '点击开始聊天')}</div>
+        ${count > 0 ? `<div class="char-card-count">${count} 条会话</div>` : ''}
+        ${!c.builtIn ? `<button class="char-card-edit" title="编辑分身" aria-label="编辑">
+          <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+        </button>` : ''}
+      `;
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('.char-card-edit')) return;
+        switchCharacter(c.id);
+      });
+      const editBtn = card.querySelector('.char-card-edit');
+      if (editBtn) {
+        editBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openCharacterModal(c.id);
+        });
+      }
+      grid.appendChild(card);
+    });
+    // 添加分身卡片
+    const addCard = document.createElement('div');
+    addCard.className = 'character-card add-card';
+    addCard.innerHTML = `
+      <div class="char-card-add-icon">+</div>
+      <div class="char-card-name">添加分身</div>
+    `;
+    addCard.addEventListener('click', () => openCharacterModal(null));
+    grid.appendChild(addCard);
+  }
+
+  function switchCharacter(cid) {
+    if (!cid) return;
+    const c = getCharacterById(cid);
+    state.currentCharacterId = c.id;
+    saveActiveCharacter(c.id);
+    // 找该角色的当前 session（保留 id 如果存在）
+    const own = state.sessions.filter((s) => (s.characterId || BUILTIN_CHARACTERS[0].id) === c.id);
+    state.currentSessionId = own.length > 0 ? own[0].id : null;
+    persist();
+    enterChatView();
+  }
+
+  /* ============================================
+   * 创建 / 编辑分身 弹窗
+   * ============================================ */
+  let editingCharId = null;
+  let pendingAvatarDataUrl = '';
+
+  function openCharacterModal(id) {
+    editingCharId = id;
+    pendingAvatarDataUrl = '';
+    const modal = $('characterModal');
+    const title = $('characterTitle');
+    const delBtn = $('deleteCharacterBtn');
+    if (id) {
+      const c = getCharacterById(id);
+      title.textContent = c.builtIn ? '查看分身（内置）' : '编辑分身';
+      $('charNameInput').value = c.name || '';
+      $('charTaglineInput').value = c.tagline || '';
+      $('charPersonaInput').value = c.persona || '';
+      $('charGreetingInput').value = c.greeting || '';
+      $('charAvatarPreview').src = c.avatar || '';
+      $('charNameInput').disabled = !!c.builtIn;
+      $('charTaglineInput').disabled = !!c.builtIn;
+      $('charPersonaInput').disabled = !!c.builtIn;
+      $('charGreetingInput').disabled = !!c.builtIn;
+      delBtn.hidden = !!c.builtIn;
+    } else {
+      title.textContent = '添加分身';
+      ['charNameInput','charTaglineInput','charPersonaInput','charGreetingInput'].forEach((x) => { $(x).value = ''; $(x).disabled = false; });
+      $('charAvatarPreview').src = '';
+      delBtn.hidden = true;
+    }
+    modal.hidden = false;
+  }
+
+  function closeCharacterModal() {
+    const modal = $('characterModal');
+    if (modal) modal.hidden = true;
+    editingCharId = null;
+    pendingAvatarDataUrl = '';
+  }
+
+  function handleAvatarFile(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    if (file.size > 800 * 1024) {
+      if (!confirm('图片大于 800KB，建议先压缩。仍要使用吗？')) {
+        e.target.value = '';
+        return;
+      }
+    }
+    const reader = new FileReader();
+    reader.onload = function () {
+      pendingAvatarDataUrl = String(reader.result || '');
+      const prev = $('charAvatarPreview');
+      if (prev) prev.src = pendingAvatarDataUrl;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function saveCharacterFromForm() {
+    const name = $('charNameInput').value.trim();
+    if (!name) { alert('请填写分身名字'); return; }
+    const tagline = $('charTaglineInput').value.trim();
+    const persona = $('charPersonaInput').value.trim();
+    const greeting = $('charGreetingInput').value.trim();
+    let id = editingCharId;
+    let c;
+    if (id) {
+      c = getCharacterById(id);
+      if (c.builtIn) {
+        // 内置角色只允许改 tagline 和 greeting
+        c = Object.assign({}, c, { tagline, greeting });
+      } else {
+        c = Object.assign({}, c, {
+          name, tagline, persona, greeting,
+          avatar: pendingAvatarDataUrl || c.avatar,
+        });
+      }
+    } else {
+      id = 'c-' + uid();
+      c = {
+        id,
+        name, tagline, persona, greeting,
+        avatar: pendingAvatarDataUrl || '',
+        builtIn: false,
+      };
+    }
+    upsertCharacter(c);
+    // 若编辑的是当前角色，重新渲染 header
+    if (state.currentCharacterId === c.id) renderCharacterHeader();
+    renderHome();
+    closeCharacterModal();
+    alert('已保存');
+  }
+
+  function deleteCharacterFromForm() {
+    if (!editingCharId) return;
+    const c = getCharacterById(editingCharId);
+    if (c.builtIn) { alert('内置分身不可删除'); return; }
+    if (!confirm('删除分身「' + c.name + '」？该分身的会话也会一并删除，且不可恢复。')) return;
+    const wasCurrent = state.currentCharacterId === editingCharId;
+    deleteCharacter(editingCharId);
+    if (wasCurrent) {
+      state.currentCharacterId = BUILTIN_CHARACTERS[0].id;
+      saveActiveCharacter(state.currentCharacterId);
+    }
+    renderHome();
+    closeCharacterModal();
+  }
+
+  function clearCurrentCharacterSessions() {
+    const cid = state.currentCharacterId;
+    state.sessions = state.sessions.filter((s) => (s.characterId || BUILTIN_CHARACTERS[0].id) !== cid);
+    ensureCurrentSession();
+    persist();
+    renderAll();
   }
 
   // DOM ready
