@@ -1113,4 +1113,47 @@
   } else {
     init();
   }
+
+  /* ============================================
+   * URL Hash 一键启用真实 AI
+   * 形如 https://huanghoujunhhj.github.io/lzh-chat/#sf=<key>
+   * sf = 硅基流动（默认 Qwen/Qwen3-8B 免费模型）
+   * kimi = Moonshot KIMI（kimi-k2.6）
+   * 注入后清空 hash，避免泄露到历史/分享链接
+   * ============================================ */
+  function applyHashSettings() {
+    const h = (location.hash || '').replace(/^#/, '');
+    if (!h) return;
+    const m = h.match(/^(sf|kimi|deepseek|zhipu|openai)=(.+)$/);
+    if (!m) return;
+    const presets = {
+      sf: { useRealAi: true, baseUrl: 'https://api.siliconflow.cn/v1', model: 'Qwen/Qwen3-8B' },
+      kimi: { useRealAi: true, baseUrl: 'https://api.moonshot.cn/v1', model: 'kimi-k2.6' },
+      deepseek: { useRealAi: true, baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+      zhipu: { useRealAi: true, baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash' },
+      openai: { useRealAi: true, baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+    };
+    const cfg = presets[m[1]];
+    if (!cfg) return;
+    const apiKey = decodeURIComponent(m[2]);
+    // 读取旧设置保留 systemPrompt
+    let old = {};
+    try { old = JSON.parse(localStorage.getItem('chat-settings-lzh') || '{}'); } catch (e) {}
+    const next = Object.assign({}, cfg, {
+      apiKey: apiKey.trim(),
+      systemPrompt: old.systemPrompt,
+    });
+    localStorage.setItem('chat-settings-lzh', JSON.stringify(next));
+    // 清空 hash 防止泄露
+    history.replaceState(null, '', location.pathname + location.search);
+    alert('✅ 已通过链接启用 ' + m[1].toUpperCase() + ' 模型：' + next.model);
+  }
+  // 页面加载后立即检测（不再依赖 init，避免错过时机）
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', applyHashSettings);
+  } else {
+    applyHashSettings();
+  }
+  // 后续 hash 变化也响应
+  window.addEventListener('hashchange', applyHashSettings);
 })();
