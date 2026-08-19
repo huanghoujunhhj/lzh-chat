@@ -681,10 +681,15 @@
   async function callRealAI(settings, messages) {
     const url = settings.baseUrl.replace(/\/+$/, '') + '/chat/completions';
     // 优先用当前角色的人设，其次 settings 里手动保存的，最后才是默认
-    const persona = getCurrentCharacter().persona || DEFAULT_SYSTEM_PROMPT;
-    const sys = settings.systemPrompt && settings.systemPrompt !== DEFAULT_SYSTEM_PROMPT
+    const ch = getCurrentCharacter();
+    const persona = ch.persona || DEFAULT_SYSTEM_PROMPT;
+    let sys = settings.systemPrompt && settings.systemPrompt !== DEFAULT_SYSTEM_PROMPT
       ? settings.systemPrompt
       : persona;
+    // 分身独有的「特殊设定」（可选填）融入系统提示，让它真正影响对话
+    if (ch.special) {
+      sys += '\n【特殊设定】' + ch.special;
+    }
     const payload = {
       model: settings.model,
       messages: [
@@ -1086,7 +1091,12 @@
     $('modelInput').value = s.model || '';
     // 默认显示当前角色人设；若用户曾保存过自定义 prompt 且不是默认，则用用户自定义的
     const isDefaultPrompt = !s.systemPrompt || s.systemPrompt === DEFAULT_SYSTEM_PROMPT;
-    $('systemPromptInput').value = (isDefaultPrompt ? c.persona : s.systemPrompt) || DEFAULT_SYSTEM_PROMPT;
+    let shownPrompt = (isDefaultPrompt ? c.persona : s.systemPrompt) || DEFAULT_SYSTEM_PROMPT;
+    // 若有「特殊设定」，在预览里一并展示（不影响 AI 模式下 callRealAI 的叠加）
+    if (isDefaultPrompt && c.special) {
+      shownPrompt += '\n【特殊设定】' + c.special;
+    }
+    $('systemPromptInput').value = shownPrompt;
     renderPresetChips(s.baseUrl, s.model);
     updateAiSettingsVisibility();
     $('settingsModal').hidden = false;
@@ -1432,15 +1442,17 @@
       $('charTaglineInput').value = c.tagline || '';
       $('charPersonaInput').value = c.persona || '';
       $('charGreetingInput').value = c.greeting || '';
+      $('charSpecialInput').value = c.special || '';
       $('charAvatarPreview').src = c.avatar || '';
       $('charNameInput').disabled = !!c.builtIn;
       $('charTaglineInput').disabled = !!c.builtIn;
       $('charPersonaInput').disabled = !!c.builtIn;
       $('charGreetingInput').disabled = !!c.builtIn;
+      $('charSpecialInput').disabled = !!c.builtIn;
       delBtn.hidden = !!c.builtIn;
     } else {
       title.textContent = '添加分身';
-      ['charNameInput','charTaglineInput','charPersonaInput','charGreetingInput'].forEach((x) => { $(x).value = ''; $(x).disabled = false; });
+      ['charNameInput','charTaglineInput','charPersonaInput','charGreetingInput','charSpecialInput'].forEach((x) => { $(x).value = ''; $(x).disabled = false; });
       $('charAvatarPreview').src = '';
       delBtn.hidden = true;
     }
@@ -1478,6 +1490,7 @@
     const tagline = $('charTaglineInput').value.trim();
     const persona = $('charPersonaInput').value.trim();
     const greeting = $('charGreetingInput').value.trim();
+    const special = $('charSpecialInput').value.trim();
     let id = editingCharId;
     let c;
     if (id) {
@@ -1487,7 +1500,7 @@
         c = Object.assign({}, c, { tagline, greeting });
       } else {
         c = Object.assign({}, c, {
-          name, tagline, persona, greeting,
+          name, tagline, persona, greeting, special,
           avatar: pendingAvatarDataUrl || c.avatar,
         });
       }
