@@ -91,6 +91,15 @@
       hint: '国产 GLM，免费额度大',
     },
     {
+      id: 'siliconflow',
+      name: '硅基流动',
+      tag: '免费',
+      icon: '⚡',
+      baseUrl: 'https://api.siliconflow.cn/v1',
+      model: 'moonshotai/Kimi-K2',
+      hint: '国内注册送免费额度，一个 Key 调 KIMI/DeepSeek 等',
+    },
+    {
       id: 'custom',
       name: '自定义',
       tag: '',
