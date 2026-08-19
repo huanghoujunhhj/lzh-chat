@@ -448,6 +448,61 @@ textarea {
   margin: 0 auto;
 }
 
+.preset-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.preset-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 13px;
+  background: var(--surface);
+  border: 1px solid var(--border-2);
+  border-radius: 18px;
+  font-size: 13px;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.preset-chip:hover {
+  background: var(--primary-soft);
+  border-color: var(--primary-2);
+  color: var(--primary-dark);
+  transform: translateY(-1px);
+}
+
+.preset-chip.active {
+  background: linear-gradient(135deg, var(--primary), var(--primary-2));
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(255, 143, 163, 0.28);
+}
+
+.preset-chip .preset-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.preset-chip.active .preset-tag {
+  background: rgba(255, 255, 255, 0.25);
+  color: #fff;
+}
+
+.preset-tag {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: var(--bg-2);
+  color: var(--text-3);
+  margin-left: 2px;
+}
+
 .example-chip {
   padding: 7px 14px;
   background: var(--surface);
