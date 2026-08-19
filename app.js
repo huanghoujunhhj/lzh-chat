@@ -485,8 +485,9 @@
       const c = getCurrentCharacter();
       const empty = document.createElement('div');
       empty.className = 'empty-state';
+      const av = c.avatar || '';
       empty.innerHTML = `
-        <img class="msg-avatar" id="emptyAvatar" alt="" src="${escapeAttr(c.avatar || '')}" style="width:64px;height:64px;margin:0 auto 14px;" onerror="this.style.display='none'" />
+        <img class="empty-state-avatar" alt="" width="72" height="72" src="${escapeAttr(av)}" onerror="this.style.display='none'" />
         <div class="empty-title">${escapeHtml(c.name)} 在线</div>
         <div class="empty-sub">问点数学题、聊聊排球，或者随便说点什么</div>
         <div class="empty-chips" id="emptyChips"></div>
@@ -516,6 +517,8 @@
       const img = document.createElement('img');
       img.className = 'msg-avatar';
       img.alt = c.name;
+      img.width = 36;
+      img.height = 36;
       img.src = c.avatar || '';
       img.onerror = function () { this.replaceWith(Object.assign(document.createElement('div'), { className: 'msg-avatar bot', textContent: (c.name||'TA').slice(0,1) })); };
       avatar.appendChild(img);
@@ -540,6 +543,8 @@
     const img = document.createElement('img');
     img.className = 'msg-avatar';
     img.alt = c.name;
+    img.width = 36;
+    img.height = 36;
     img.src = c.avatar || '';
     img.onerror = function () { this.replaceWith(Object.assign(document.createElement('div'), { className: 'msg-avatar bot', textContent: (c.name||'TA').slice(0,1) })); };
     avatar.appendChild(img);
@@ -1192,15 +1197,20 @@
     }
     // 加载活跃角色（用户上次在的角色）
     state.currentCharacterId = loadActiveCharacter();
-    // 若 state.view 没初始化过，默认进入 chat（保持上次的对话）
-    if (!state.view) state.view = 'chat';
+    // 第一次进来或之前没有会话 → 默认进主页让用户选分身；之后再记住上次的视图
+    if (!state.view) {
+      state.view = 'chat';
+    }
+    const isFirstTime = state.sessions.length === 0;
     ensureCurrentSession();
 
     // 渲染
     renderAll();
 
-    // 视图
-    if (state.view === 'home') {
+    // 视图：首次（无历史会话）→ 引导用户去主页选分身；其余情况按上次视图
+    if (isFirstTime) {
+      enterHomeView(false);
+    } else if (state.view === 'home') {
       enterHomeView(false);
     } else {
       enterChatView();
@@ -1250,6 +1260,8 @@
     // 主页 / 返回主页 / 创建分身事件
     $('homeBackBtn').addEventListener('click', () => enterHomeView(true));
     $('backHomeBtn').addEventListener('click', () => enterHomeView(true));
+    const switchBtn = $('switchCharBtn');
+    if (switchBtn) switchBtn.addEventListener('click', () => enterHomeView(true));
     $('closeCharacterBtn').addEventListener('click', closeCharacterModal);
     $('characterBackdrop').addEventListener('click', closeCharacterModal);
     $('saveCharacterBtn').addEventListener('click', saveCharacterFromForm);
@@ -1306,6 +1318,9 @@
     const t1 = $('brandTitle'); if (t1) t1.textContent = c.name || '分身';
     const t2 = $('brandSub'); if (t2) t2.textContent = c.tagline || '';
     const t3 = $('topbarName'); if (t3) t3.textContent = c.name || '分身';
+    // 让顶栏的"在线"状态变成一个明显的可点击提示：点击 → 切换分身
+    const status = $('statusText');
+    if (status) status.innerHTML = '切换分身 <span style="opacity:.7;font-size:11px;">▾</span>';
   }
 
   function enterHomeView(persist) {
@@ -1339,10 +1354,14 @@
     sorted.forEach((c) => {
       const card = document.createElement('div');
       card.className = 'character-card';
+      if (c.id === state.currentCharacterId) card.classList.add('active');
       card.dataset.id = c.id;
       const count = countSessionsByCharacter(c.id);
+      // 用 inline 属性双重保险，避免 CSS 没加载时头像被撑大
       card.innerHTML = `
-        <img class="char-card-avatar" alt="" src="${escapeAttr(c.avatar || '')}" onerror="this.style.opacity=0.3" />
+        <div class="char-card-avatar-wrap">
+          <img class="char-card-avatar" alt="" width="84" height="84" src="${escapeAttr(c.avatar || '')}" onerror="this.style.opacity=0.3" />
+        </div>
         <div class="char-card-name">${escapeHtml(c.name || '未命名')}</div>
         <div class="char-card-tag">${escapeHtml(c.tagline || '点击开始聊天')}</div>
         ${count > 0 ? `<div class="char-card-count">${count} 条会话</div>` : ''}
