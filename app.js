@@ -42,6 +42,65 @@
     systemPrompt: DEFAULT_SYSTEM_PROMPT,
   };
 
+  // 一键预设：点一下自动填 Base URL + 模型，Key 用户自己填
+  // 不出现 user 的敏感信息；统一国际/国内主流入口
+  const PRESETS = [
+    {
+      id: 'kimi-k26',
+      name: 'KIMI K2.6',
+      tag: '月之暗面',
+      icon: '🌙',
+      baseUrl: 'https://api.moonshot.cn/v1',
+      model: 'kimi-k2.6',
+      hint: '国内 Moonshot，256K 上下文',
+    },
+    {
+      id: 'kimi-k26-intl',
+      name: 'KIMI K2.6 · 国际',
+      tag: 'Moonshot',
+      icon: '🌙',
+      baseUrl: 'https://api.moonshot.ai/v1',
+      model: 'kimi-k2.6',
+      hint: '国际 Moonshot 入口',
+    },
+    {
+      id: 'openai',
+      name: 'OpenAI',
+      tag: 'GPT',
+      icon: '🤖',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-4o-mini',
+      hint: '官方 OpenAI，需要科学上网',
+    },
+    {
+      id: 'deepseek',
+      name: 'DeepSeek',
+      tag: '深度',
+      icon: '🐳',
+      baseUrl: 'https://api.deepseek.com/v1',
+      model: 'deepseek-chat',
+      hint: '国产，便宜',
+    },
+    {
+      id: 'zhipu',
+      name: '智谱 GLM',
+      tag: 'GLM',
+      icon: '🧠',
+      baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+      model: 'glm-4-flash',
+      hint: '国产 GLM，免费额度大',
+    },
+    {
+      id: 'custom',
+      name: '自定义',
+      tag: '',
+      icon: '✏️',
+      baseUrl: '',
+      model: '',
+      hint: '自己填 Base URL + 模型',
+    },
+  ];
+
   /* ============================================
    * 工具函数
    * ============================================ */
@@ -858,8 +917,54 @@
     $('apiKeyInput').value = s.apiKey || '';
     $('modelInput').value = s.model || '';
     $('systemPromptInput').value = s.systemPrompt || DEFAULT_SYSTEM_PROMPT;
+    renderPresetChips(s.baseUrl, s.model);
     updateAiSettingsVisibility();
     $('settingsModal').hidden = false;
+  }
+
+  function renderPresetChips(currentBaseUrl, currentModel) {
+    const wrap = $('presetChips');
+    if (!wrap) return;
+    const cur = (currentBaseUrl || '').replace(/\/+$/, '');
+    let matchedId = null;
+    const buttons = PRESETS.map((p) => {
+      const normalize = (u) => (u || '').replace(/\/+$/, '');
+      const sameUrl = normalize(p.baseUrl) === cur;
+      const sameModel = (p.model || '') === (currentModel || '');
+      const isActive = p.id !== 'custom' && sameUrl && sameModel;
+      if (isActive) matchedId = p.id;
+      return `
+        <button type="button" class="preset-chip ${isActive ? 'active' : ''}" data-preset="${p.id}" title="${escapeHtml(p.hint || '')}">
+          <span class="preset-icon">${p.icon}</span>
+          <span>${escapeHtml(p.name)}</span>
+          ${p.tag ? `<span class="preset-tag">${escapeHtml(p.tag)}</span>` : ''}
+        </button>
+      `;
+    });
+    wrap.innerHTML = buttons.join('');
+    wrap.querySelectorAll('.preset-chip').forEach((btn) => {
+      btn.addEventListener('click', () => applyPreset(btn.dataset.preset));
+    });
+  }
+
+  function applyPreset(presetId) {
+    const p = PRESETS.find((x) => x.id === presetId);
+    if (!p) return;
+    const baseEl = $('baseUrlInput');
+    const modelEl = $('modelInput');
+    if (p.id === 'custom') {
+      // 自定义：聚焦到输入框让用户自己填
+      baseEl.value = '';
+      modelEl.value = '';
+      baseEl.focus();
+    } else {
+      if (p.baseUrl) baseEl.value = p.baseUrl;
+      if (p.model) modelEl.value = p.model;
+    }
+    // 重新高亮
+    renderPresetChips(baseEl.value, modelEl.value);
+    // 同时聚焦到 API Key 输入框，方便直接粘贴
+    setTimeout(() => $('apiKeyInput').focus(), 0);
   }
 
   function closeSettings() {
@@ -951,6 +1056,11 @@
     $('closeSettingsBtn').addEventListener('click', closeSettings);
     $('modalBackdrop').addEventListener('click', closeSettings);
     $('useRealAiToggle').addEventListener('change', updateAiSettingsVisibility);
+    ['baseUrlInput', 'modelInput'].forEach((id) => {
+      $(id).addEventListener('input', () => {
+        renderPresetChips($('baseUrlInput').value, $('modelInput').value);
+      });
+    });
     $('saveSettingsBtn').addEventListener('click', () => {
       const s = collectSettingsFromForm();
       saveSettings(s);
