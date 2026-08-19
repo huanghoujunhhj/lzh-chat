@@ -96,8 +96,8 @@
       tag: '免费',
       icon: '⚡',
       baseUrl: 'https://api.siliconflow.cn/v1',
-      model: 'moonshotai/Kimi-K2',
-      hint: '国内注册送免费额度，一个 Key 调 KIMI/DeepSeek 等',
+      model: 'Qwen/Qwen3-8B',
+      hint: '国内注册送免费额度，默认 Qwen3-8B 完全免费不耗额度',
     },
     {
       id: 'custom',
