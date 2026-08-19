@@ -4,20 +4,32 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="theme-color" content="#FF8FA3" />
-  <title>刘梓菡 · AI</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🌸%3C/text%3E%3C/svg%3E" />
+  <title>分身聊天 · AI</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🌸%3C/text%3C/svg%3E" />
   <link rel="stylesheet" href="style.css" />
 </head>
-<body>
+<body class="view-home">
   <div class="app" id="app">
-    <!-- 侧边栏：历史会话列表 -->
+
+    <!-- 主页：选择分身 -->
+    <section class="home-view" id="homeView">
+      <header class="home-header">
+        <h1>分身聊天</h1>
+        <p class="home-sub">挑一个 TA，开启对话</p>
+      </header>
+      <div class="character-grid" id="characterGrid">
+        <!-- 角色卡片由 JS 渲染 -->
+      </div>
+    </section>
+
+    <!-- 聊天界面 -->
     <aside class="sidebar" id="sidebar" aria-label="历史会话">
       <div class="sidebar-header">
         <div class="brand">
-          <div class="brand-avatar" aria-hidden="true">菡</div>
+          <img class="brand-avatar-img" id="brandAvatar" alt="" src="assets/avatar-lzh.jpg" />
           <div class="brand-text">
-            <div class="brand-title">刘梓菡 · AI</div>
-            <div class="brand-sub">数学课代表</div>
+            <div class="brand-title" id="brandTitle">刘梓菡</div>
+            <div class="brand-sub" id="brandSub">数学课代表</div>
           </div>
         </div>
       </div>
@@ -34,30 +46,39 @@
       </div>
 
       <div class="sidebar-footer">
+        <button class="back-home-btn" id="backHomeBtn" type="button" title="回到主页">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+            <path fill="currentColor" d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
+          </svg>
+          <span>返回主页</span>
+        </button>
         <button class="clear-all-btn" id="clearAllBtn" type="button" title="清空所有对话">
           <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
             <path fill="currentColor" d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
           </svg>
-          <span>清空所有对话</span>
+          <span>清空对话</span>
         </button>
       </div>
     </aside>
 
-    <!-- 移动端遮罩层 -->
     <div class="sidebar-overlay" id="sidebarOverlay" aria-hidden="true"></div>
 
-    <!-- 主区域 -->
     <main class="main">
       <header class="topbar">
+        <button class="icon-btn home-back-btn" id="homeBackBtn" type="button" title="返回主页" aria-label="返回主页">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <path fill="currentColor" d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
+          </svg>
+        </button>
         <button class="hamburger" id="hamburgerBtn" type="button" aria-label="打开侧边栏">
           <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
             <path fill="currentColor" d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/>
           </svg>
         </button>
         <div class="topbar-title">
-          <div class="topbar-avatar" aria-hidden="true">菡</div>
+          <img class="topbar-avatar-img" id="topbarAvatar" alt="" src="assets/avatar-lzh.jpg" />
           <div>
-            <div class="topbar-name">刘梓菡</div>
+            <div class="topbar-name" id="topbarName">刘梓菡</div>
             <div class="topbar-status" id="statusText">在线</div>
           </div>
         </div>
@@ -69,11 +90,10 @@
       </header>
 
       <section class="messages" id="messages" aria-live="polite">
-        <!-- 消息由 JS 动态生成 -->
         <div class="empty-state" id="emptyState">
           <div class="empty-icon">🌸</div>
-          <div class="empty-title">开始聊天吧～</div>
-          <div class="empty-sub">问点数学题、聊聊排球，或者随便说点什么</div>
+          <div class="empty-title" id="emptyTitle">开始聊天吧～</div>
+          <div class="empty-sub" id="emptySub">问点数学题、聊聊排球，或者随便说点什么</div>
         </div>
       </section>
 
@@ -137,7 +157,7 @@
             <input id="modelInput" type="text" placeholder="gpt-3.5-turbo" />
           </div>
           <div class="setting-row">
-            <label for="systemPromptInput">系统提示词（刘梓菡人设）</label>
+            <label for="systemPromptInput">系统提示词（当前角色人设）</label>
             <textarea id="systemPromptInput" rows="8"></textarea>
           </div>
           <div class="setting-row inline">
@@ -152,7 +172,55 @@
         <div class="setting-divider"></div>
 
         <div class="setting-row">
-          <button class="btn-danger" id="clearAllInSettingsBtn" type="button">清空所有对话记录</button>
+          <button class="btn-danger" id="clearAllInSettingsBtn" type="button">清空当前角色所有对话记录</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 创建/编辑分身弹窗 -->
+  <div class="modal" id="characterModal" hidden>
+    <div class="modal-backdrop" id="characterBackdrop"></div>
+    <div class="modal-card" role="dialog" aria-labelledby="characterTitle" aria-modal="true">
+      <div class="modal-header">
+        <h2 id="characterTitle">添加分身</h2>
+        <button class="icon-btn" id="closeCharacterBtn" type="button" aria-label="关闭">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <path fill="currentColor" d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="setting-row char-avatar-row">
+          <label>头像</label>
+          <div class="char-avatar-picker">
+            <img id="charAvatarPreview" alt="" />
+            <label for="charAvatarInput" class="char-avatar-upload">选择图片</label>
+            <input id="charAvatarInput" type="file" accept="image/*" hidden />
+          </div>
+        </div>
+        <div class="setting-row">
+          <label for="charNameInput">名字</label>
+          <input id="charNameInput" type="text" placeholder="例如：林夏、弟弟、温柔学姐…" />
+        </div>
+        <div class="setting-row">
+          <label for="charTaglineInput">一句话简介</label>
+          <input id="charTaglineInput" type="text" placeholder="例如：你的青梅竹马 / 数学课代表" />
+        </div>
+        <div class="setting-row">
+          <label for="charPersonaInput">人设 / 性格描述</label>
+          <textarea id="charPersonaInput" rows="6" placeholder="例如：性格温柔、说话轻声细语，喜欢看书；对外人礼貌疏远，对熟人撒娇。回复时常用括号写动作。" ></textarea>
+        </div>
+        <div class="setting-row">
+          <label for="charGreetingInput">开场白（可选）</label>
+          <textarea id="charGreetingInput" rows="2" placeholder="例如：（抬起头笑了笑）在呢，今天怎么想起我了～"></textarea>
+        </div>
+        <div class="setting-row inline">
+          <button class="btn-danger" id="deleteCharacterBtn" type="button" hidden>删除该分身</button>
+          <button class="btn-primary" id="saveCharacterBtn" type="button">保存分身</button>
+        </div>
+        <div class="setting-hint">
+          头像会保存在你浏览器本地（base64），不上传服务器。建议图片 ≤ 500KB，正方形最佳。
         </div>
       </div>
     </div>
