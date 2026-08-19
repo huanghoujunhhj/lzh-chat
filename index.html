@@ -119,6 +119,12 @@
 
         <div class="setting-group" id="aiSettingsGroup">
           <div class="setting-row">
+            <label>预设服务（一键填入 Base URL 和模型）</label>
+            <div class="preset-chips" id="presetChips">
+              <!-- 预设由 JS 渲染 -->
+            </div>
+          </div>
+          <div class="setting-row">
             <label for="baseUrlInput">API Base URL</label>
             <input id="baseUrlInput" type="text" placeholder="https://api.openai.com/v1" />
           </div>
