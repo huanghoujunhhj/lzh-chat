@@ -56,6 +56,9 @@
     apiKey: '',
     model: 'gpt-3.5-turbo',
     systemPrompt: DEFAULT_SYSTEM_PROMPT,
+    // 主动互动：分身会主动找你搭话、分享小事，而不是只"我问它答"
+    proactiveEnabled: true,
+    proactiveInterval: 90, // 沉默多少秒后，TA 主动开口
   };
 
   // 一键预设：点一下自动填 Base URL + 模型，Key 用户自己填
@@ -384,6 +387,10 @@
     persist();
     renderAll();
     closeMobileSidebar();
+    // 切到空会话 → 发开场白；非空会话 → 安排沉默后主动搭话
+    maybeSendGreeting();
+    const swSession = getCurrentSession();
+    if (swSession && swSession.messages.length > 0) scheduleProactive();
   }
 
   function addMessageToCurrent(role, content) {
@@ -616,6 +623,15 @@
    * ============================================ */
   let isThinking = false;
 
+  // 主动互动引擎状态
+  let silenceTimer = null;            // 沉默后主动搭话的计时器
+  let lastProactiveAt = 0;            // 上一次主动消息的时间戳
+  let proactiveCount = 0;             // 当前会话已主动发送的次数
+  let awayAt = 0;                     // 离开页面的时间戳
+  const MIN_PROACTIVE_GAP = 45000;    // 两条主动消息之间的最小间隔(ms)
+  const MAX_PROACTIVE_PER_SESSION = 15; // 单个会话主动消息上限
+  const RETURN_THRESHOLD = 15000;     // 离开超过这个时间(ms)回来才问候
+
   async function handleSend() {
     if (isThinking) return;
     const input = $('input');
@@ -660,6 +676,8 @@
       isThinking = false;
       updateSendButton();
     }
+    // 用户发完且 AI 已回 → 启动"沉默后主动搭话"计时
+    scheduleProactive();
   }
 
   function updateSendButton() {
@@ -678,7 +696,7 @@
   /* ============================================
    * 真实 AI 调用（OpenAI 兼容协议）
    * ============================================ */
-  async function callRealAI(settings, messages) {
+  async function callRealAI(settings, messages, opts) {
     const url = settings.baseUrl.replace(/\/+$/, '') + '/chat/completions';
     // 优先用当前角色的人设，其次 settings 里手动保存的，最后才是默认
     const ch = getCurrentCharacter();
@@ -689,6 +707,13 @@
     // 分身独有的「特殊设定」（可选填）融入系统提示，让它真正影响对话
     if (ch.special) {
       sys += '\n【特殊设定】' + ch.special;
+    }
+    // 主动互动模式：此刻不是用户在提问，而是由分身主动发起互动
+    if (opts && opts.proactive) {
+      sys += '\n\n【主动互动模式】此刻不是用户在提问，而是由你主动发起互动。请自然地开启一个话题：问候对方、问近况、分享一件小事，或基于你的人设推进一个小剧情 / 小剧场。不要使用客服腔（禁止说"有什么可以帮你的"之类），要像真实朋友一样，简短有内容，可以用括号写动作神态。';
+      if (opts.kind === 'ret') {
+        sys += ' 用户刚才离开了一会儿又回来了，可以自然地调侃或问候"你去哪了"。';
+      }
     }
     const payload = {
       model: settings.model,
@@ -885,6 +910,209 @@
       '是吗，那还挺有意思的，接着说。',
       '嗯，我也在想这事呢，你说得对。',
     ]);
+  }
+
+  /* ============================================
+   * 主动互动引擎：让分身主动发起互动（不是只"我问它答"）
+   *  - 进入空会话：先发一句开场白
+   *  - 你沉默一会儿：TA 主动搭话
+   *  - 你离开再回来：TA 主动问候
+   *  - 真实 AI 模式：由模型自行发起话题
+   * ============================================ */
+
+  // 本地主动搭话语料（按场景 + 角色类型）
+  const PROACTIVE = {
+    lzh: {
+      silence: [
+        ['戳了戳你', '喂，人呢？发什么呆呢。'],
+        ['托着腮看你', '你怎么不说话了，想啥呢？'],
+        ['把排球转着玩', '诶，你还在不？陪我聊会儿呗。'],
+        ['趴在桌上', '困了？还是被我聊困了。'],
+        ['抬头瞥了你一眼', '在忙呢？忙完回我啊。'],
+        ['凑近了些', '我刚想到个事……算了，你先说。'],
+        ['翻了个白眼', '你干嘛~ 突然不吭声了。'],
+        ['戳了戳手机', '你咋不理我了，是不是嫌我烦。'],
+        ['把脸凑近屏幕', '诶，你还在听吗？'],
+      ],
+      ret: [
+        ['歪头看你', '回来啦？刚去哪了，这么久。'],
+        ['戳了戳屏幕', '你跑哪去了，我还以为你不要我了。'],
+        ['托着腮', '诶，你终于回来啦，等你好久了。'],
+        ['偷笑', '去偷偷摸鱼了吧？被我抓到了吧。'],
+        ['挑了挑眉', '去哪了呀？我还想跟你说个事呢。'],
+      ],
+    },
+    generic: {
+      silence: [
+        ['轻轻戳了戳你', '诶，在想什么呢？跟我说说嘛。'],
+        ['歪着头看你', '你怎么突然不说话了呀？'],
+        ['托着腮', '在忙吗？忙完记得找我哦。'],
+        ['凑近一些', '我刚想到一件事，想跟你讲来着。'],
+        ['眨了眨眼', '人呢？怎么不理我啦。'],
+      ],
+      ret: [
+        ['眼睛一亮', '你回来啦！刚去哪了呀？'],
+        ['笑着招手', '欢迎回来～我还以为你走远了呢。'],
+        ['歪头', '去哪啦？这么久才回来。'],
+        ['凑近你', '你终于回来啦，我正想找你呢。'],
+      ],
+    },
+  };
+
+  // 基于自定义分身的「特殊设定」生成主动消息（本地 Bot 也能让分身"像自己"）
+  function buildSpecialProactive(ch, kind) {
+    const sp = ch.special || '';
+    if (kind === 'ret') {
+      return [
+        ['眼睛一亮', `你回来啦！我刚才还想着「${sp}」的事呢。`],
+        ['戳了戳你', `去哪了？我正想跟你说「${sp}」来着。`],
+        ['托着腮', `诶你终于回来啦，关于「${sp}」我有点好奇。`],
+      ];
+    }
+    return [
+      ['凑近你', `诶，说起来，「${sp}」那件事，你后来怎么想的？`],
+      ['托着腮', `你觉不觉得，「${sp}」这件事其实挺有意思的？`],
+      ['歪着头', `我刚才一直在想「${sp}」……你呢，怎么看？`],
+      ['轻轻戳你', `在忙吗？忙完跟我说说「${sp}」呗。`],
+    ];
+  }
+
+  // 生成本地模式的主动消息内容
+  function generateProactiveReply(ch, history, kind) {
+    const cat = kind === 'ret' ? 'ret' : 'silence';
+    let pool;
+    if (ch.id === 'lzh') {
+      pool = PROACTIVE.lzh[cat];
+    } else if (ch.special && ch.special.trim()) {
+      pool = buildSpecialProactive(ch, cat);
+    } else {
+      pool = PROACTIVE.generic[cat];
+    }
+    const item = pick(pool);
+    return `（${item[0]}）${item[1]}`;
+  }
+
+  function realAiOn(s) {
+    return !!(s.useRealAi && s.apiKey && s.baseUrl && s.model);
+  }
+
+  // 把一条分身主动说的话显示出来（带打字动画 + 持久化）
+  function appendProactiveMessage(content) {
+    const typingNode = appendTyping();
+    const delay = 500 + Math.random() * 700;
+    setTimeout(() => {
+      replaceTypingWith(typingNode, 'assistant', content);
+      addMessageToCurrent('assistant', content);
+      lastProactiveAt = Date.now();
+      proactiveCount++;
+    }, delay);
+  }
+
+  // 进入空会话时，分身先主动发一句开场白
+  function maybeSendGreeting() {
+    const settings = loadSettings();
+    if (!settings.proactiveEnabled) return;
+    const session = getCurrentSession();
+    if (!session) return;
+    if (session.messages.length > 0) return; // 已有内容则不重复发
+    const sid = session.id;
+    setTimeout(() => {
+      // 二次校验：用户没抢先发、没切走、开关仍开、仍在空会话
+      const st2 = loadSettings();
+      if (!st2.proactiveEnabled) return;
+      if (!document.body.classList.contains('view-chat')) return;
+      if (state.currentSessionId !== sid) return;
+      const s2 = getCurrentSession();
+      if (!s2 || s2.id !== sid || s2.messages.length > 0) return;
+      const ch = getCharacterById(state.currentCharacterId);
+      const greeting = ch.greeting && ch.greeting.trim()
+        ? ch.greeting
+        : '（抬头看你一眼）在呢，想聊点什么？';
+      appendProactiveMessage(greeting);
+    }, 600);
+  }
+
+  // 安排"沉默后主动搭话"计时器
+  function scheduleProactive() {
+    clearTimeout(silenceTimer);
+    silenceTimer = null;
+    const settings = loadSettings();
+    if (!settings.proactiveEnabled) return;
+    if (proactiveCount >= MAX_PROACTIVE_PER_SESSION) return;
+    const sec = Math.max(10, settings.proactiveInterval || 90);
+    silenceTimer = setTimeout(() => {
+      silenceTimer = null;
+      const input = $('input');
+      if (input && input.value.trim()) return; // 用户正在输入，不打断
+      sendProactiveMessage('silence');
+    }, sec * 1000);
+  }
+
+  // 真正发起一条主动消息（本地或真实 AI）
+  async function sendProactiveMessage(kind) {
+    if (isThinking) return;
+    const settings = loadSettings();
+    if (!settings.proactiveEnabled) return;
+    if (Date.now() - lastProactiveAt < MIN_PROACTIVE_GAP) return;
+    if (proactiveCount >= MAX_PROACTIVE_PER_SESSION) return;
+    const session = getCurrentSession();
+    if (!session) return;
+    const input = $('input');
+    if (input && input.value.trim()) return; // 正在输入不打断
+    if (!document.body.classList.contains('view-chat')) return;
+
+    isThinking = true;
+    updateSendButton();
+    const typingNode = appendTyping();
+    try {
+      let reply;
+      if (realAiOn(settings)) {
+        reply = await callRealAI(settings, session.messages, { proactive: true, kind });
+      } else {
+        await new Promise((r) => setTimeout(r, 500 + Math.random() * 900));
+        reply = generateProactiveReply(getCurrentCharacter(), session.messages, kind);
+      }
+      replaceTypingWith(typingNode, 'assistant', reply);
+      addMessageToCurrent('assistant', reply);
+      lastProactiveAt = Date.now();
+      proactiveCount++;
+    } catch (e) {
+      console.error(e);
+      replaceTypingWith(typingNode, 'assistant', '（戳了戳你）诶，你还在吗？');
+      lastProactiveAt = Date.now();
+    } finally {
+      isThinking = false;
+      updateSendButton();
+    }
+  }
+
+  // 离开 / 回到页面：回来时主动问候
+  function onVisibilityChange() {
+    if (document.hidden) {
+      awayAt = Date.now();
+      clearTimeout(silenceTimer);
+      silenceTimer = null;
+      return;
+    }
+    if (!awayAt) return;
+    const away = Date.now() - awayAt;
+    awayAt = 0;
+    if (away < RETURN_THRESHOLD) return;
+    const settings = loadSettings();
+    if (!settings.proactiveEnabled) return;
+    if (!document.body.classList.contains('view-chat')) return;
+    const session = getCurrentSession();
+    if (!session) return;
+    if (Date.now() - lastProactiveAt < MIN_PROACTIVE_GAP) return;
+    const last = session.messages[session.messages.length - 1];
+    if (last && last.role === 'assistant') return; // 对面刚说完，不必再主动
+    sendProactiveMessage('ret');
+  }
+
+  function updateProactiveVisibility() {
+    const on = $('proactiveToggle') && $('proactiveToggle').checked;
+    const row = $('proactiveIntervalRow');
+    if (row) row.style.display = on ? '' : 'none';
   }
 
   function detectIntent(text, lower) {
@@ -1097,6 +1325,9 @@
       shownPrompt += '\n【特殊设定】' + c.special;
     }
     $('systemPromptInput').value = shownPrompt;
+    $('proactiveToggle').checked = !!s.proactiveEnabled;
+    $('proactiveInterval').value = String(s.proactiveInterval || 90);
+    updateProactiveVisibility();
     renderPresetChips(s.baseUrl, s.model);
     updateAiSettingsVisibility();
     $('settingsModal').hidden = false;
@@ -1163,6 +1394,8 @@
       apiKey: $('apiKeyInput').value.trim(),
       model: $('modelInput').value.trim() || DEFAULT_SETTINGS.model,
       systemPrompt: $('systemPromptInput').value || DEFAULT_SYSTEM_PROMPT,
+      proactiveEnabled: $('proactiveToggle').checked,
+      proactiveInterval: parseInt($('proactiveInterval').value, 10) || 90,
     };
   }
 
@@ -1252,6 +1485,10 @@
     $('closeSettingsBtn').addEventListener('click', closeSettings);
     $('modalBackdrop').addEventListener('click', closeSettings);
     $('useRealAiToggle').addEventListener('change', updateAiSettingsVisibility);
+    // 主动互动：离开/回到页面时问候；开关显隐间隔行
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    const pt = $('proactiveToggle');
+    if (pt) pt.addEventListener('change', updateProactiveVisibility);
     ['baseUrlInput', 'modelInput'].forEach((id) => {
       $(id).addEventListener('input', () => {
         renderPresetChips($('baseUrlInput').value, $('modelInput').value);
@@ -1291,6 +1528,8 @@
     input.addEventListener('input', () => {
       autoResizeInput();
       updateSendButton();
+      // 用户正在输入，取消即将触发的主动搭话（不打断打字）
+      if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
     });
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
@@ -1356,6 +1595,10 @@
     ensureCurrentSession();
     renderAll();
     setTimeout(() => { const i = $('input'); if (i) i.focus(); }, 50);
+    // 空会话 → 分身先主动说开场白；非空会话 → 安排沉默后主动搭话
+    maybeSendGreeting();
+    const ecSession = getCurrentSession();
+    if (ecSession && ecSession.messages.length > 0) scheduleProactive();
   }
 
   function renderHome() {
