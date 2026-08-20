@@ -9,6 +9,23 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body class="view-home">
+  <!-- 登录门禁：黄厚钧账户独有 -->
+  <div id="loginScreen" class="login-screen">
+    <div class="login-card">
+      <div class="login-logo">🌸</div>
+      <h2 class="login-title">分身聊天</h2>
+      <p class="login-sub">黄厚钧的专属 AI 分身</p>
+      <div class="login-form">
+        <label class="login-label" for="loginUser">账户名</label>
+        <input id="loginUser" class="login-input" type="text" placeholder="请输入账户名" autocomplete="username" />
+        <label class="login-label" for="loginPass">密码</label>
+        <input id="loginPass" class="login-input" type="password" placeholder="请输入密码" autocomplete="current-password" />
+        <div id="loginError" class="login-error" hidden></div>
+        <button id="loginBtn" class="login-btn" type="button">进入</button>
+      </div>
+    </div>
+  </div>
+
   <div class="app" id="app">
 
     <!-- 主页：选择分身 -->
@@ -195,6 +212,10 @@
 
         <div class="setting-row">
           <button class="btn-danger" id="clearAllInSettingsBtn" type="button">清空当前角色所有对话记录</button>
+        </div>
+
+        <div class="setting-row">
+          <button class="btn-secondary" id="logoutBtn" type="button">退出登录</button>
         </div>
       </div>
     </div>
