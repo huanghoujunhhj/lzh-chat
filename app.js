@@ -59,6 +59,9 @@
     // 主动互动：分身会主动找你搭话、分享小事，而不是只"我问它答"
     proactiveEnabled: true,
     proactiveInterval: 90, // 沉默多少秒后，TA 主动开口
+    // 云同步（跨设备）：同步 Token 与是否自动同步
+    cloudToken: '',
+    cloudAuto: true,
   };
 
   // 登录门禁：本应用（刘梓菡分身）为「黄厚钧」账户独有
@@ -66,6 +69,13 @@
   const AUTH_PASS = '20111102';
   const AUTH_KEY = 'chat-auth-lzh';
   let appBooted = false;
+
+  // 云同步（跨设备）：聊天记录 + 设置(API Key) 用登录密码加密后存 GitHub 仓库文件
+  // 任意设备输入正确密码即可拉取解密，拿到同一份数据。仓库本身公开，但内容是加密的。
+  const CLOUD_REPO = 'huanghoujunhhj/lzh-chat';
+  const CLOUD_BRANCH = 'main';
+  const CLOUD_PATH = 'cloud/lzh-data.json';
+  const CLOUD_SALT = 'lzh-chat-cloud-v1';
 
   // 一键预设：点一下自动填 Base URL + 模型，Key 用户自己填
   // 不出现 user 的敏感信息；统一国际/国内主流入口
@@ -416,6 +426,7 @@
     }
     persist();
     renderSessionList();
+    scheduleCloudPush();
   }
 
   function clearAllSessions() {
@@ -424,6 +435,7 @@
     ensureCurrentSession();
     persist();
     renderAll();
+    scheduleCloudPush();
   }
 
   function persist() {
@@ -1018,6 +1030,7 @@
   function maybeSendGreeting() {
     const settings = loadSettings();
     if (!settings.proactiveEnabled) return;
+    if (Date.now() - greetingSentAt < 8000) return; // 8 秒内不重复发开场白（防止云同步重新进入）
     const session = getCurrentSession();
     if (!session) return;
     if (session.messages.length > 0) return; // 已有内容则不重复发
@@ -1034,6 +1047,7 @@
       const greeting = ch.greeting && ch.greeting.trim()
         ? ch.greeting
         : '（抬头看你一眼）在呢，想聊点什么？';
+      greetingSentAt = Date.now();
       appendProactiveMessage(greeting);
     }, 600);
   }
@@ -1098,6 +1112,9 @@
       awayAt = Date.now();
       clearTimeout(silenceTimer);
       silenceTimer = null;
+      // 离开页面时把最新数据刷到云端（尽量）
+      const st = loadSettings();
+      if (st.cloudToken && st.cloudAuto && cloudSupported()) cloudPush();
       return;
     }
     if (!awayAt) return;
@@ -1333,6 +1350,11 @@
     $('systemPromptInput').value = shownPrompt;
     $('proactiveToggle').checked = !!s.proactiveEnabled;
     $('proactiveInterval').value = String(s.proactiveInterval || 90);
+    // 云同步
+    const cti = $('cloudTokenInput');
+    if (cti) cti.value = s.cloudToken || '';
+    const cat = $('cloudAutoToggle');
+    if (cat) cat.checked = s.cloudAuto !== false;
     updateProactiveVisibility();
     renderPresetChips(s.baseUrl, s.model);
     updateAiSettingsVisibility();
@@ -1402,6 +1424,8 @@
       systemPrompt: $('systemPromptInput').value || DEFAULT_SYSTEM_PROMPT,
       proactiveEnabled: $('proactiveToggle').checked,
       proactiveInterval: parseInt($('proactiveInterval').value, 10) || 90,
+      cloudToken: ($('cloudTokenInput').value || '').trim(),
+      cloudAuto: $('cloudAutoToggle').checked,
     };
   }
 
@@ -1478,6 +1502,184 @@
     location.reload();
   }
 
+  /* ============================================
+   * 云同步引擎：跨设备共享同一账户数据
+   *  - 数据用登录密码(PBKDF2 -> AES-GCM)加密后存 GitHub 仓库文件
+   *  - 读取(公开仓库)不需要 token；写入需要用户在自己设置里填的同步 Token
+   *  - 同步内容含：会话、设置(含 API Key)、分身、当前活跃分身
+   * ============================================ */
+  let cloudPushTimer = null;
+  let lastCloudSha = null;
+  let greetingSentAt = 0; // 防止云同步重新进入视图时重复发开场白
+
+  function cloudSupported() {
+    return !!(typeof crypto !== 'undefined' && crypto.subtle && typeof btoa === 'function');
+  }
+  function bytesToB64(bytes) {
+    let bin = '';
+    const arr = new Uint8Array(bytes);
+    const chunk = 0x8000;
+    for (let i = 0; i < arr.length; i += chunk) {
+      bin += String.fromCharCode.apply(null, arr.subarray(i, i + chunk));
+    }
+    return btoa(bin);
+  }
+  function b64ToBytes(b64) {
+    const bin = atob(b64);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return arr;
+  }
+  async function deriveCloudKey(password) {
+    const enc = new TextEncoder();
+    const km = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']);
+    return crypto.subtle.deriveKey(
+      { name: 'PBKDF2', salt: enc.encode(CLOUD_SALT), iterations: 100000, hash: 'SHA-256' },
+      km,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt']
+    );
+  }
+  async function encryptCloud(obj, key) {
+    const enc = new TextEncoder();
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode(JSON.stringify(obj)));
+    const combined = new Uint8Array(iv.length + ct.byteLength);
+    combined.set(iv, 0);
+    combined.set(new Uint8Array(ct), iv.length);
+    return bytesToB64(combined);
+  }
+  async function decryptCloud(b64, key) {
+    const combined = b64ToBytes(b64);
+    const iv = combined.slice(0, 12);
+    const ct = combined.slice(12);
+    const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
+    return JSON.parse(new TextDecoder().decode(pt));
+  }
+  function buildCloudBundle() {
+    return {
+      v: 1,
+      updatedAt: Date.now(),
+      sessions: localStorage.getItem(STORAGE_KEY),
+      settings: localStorage.getItem(SETTINGS_KEY),
+      characters: localStorage.getItem(CHARACTERS_KEY),
+      activeCharacter: localStorage.getItem(ACTIVE_CHAR_KEY),
+    };
+  }
+  function applyCloudBundle(bundle) {
+    if (!bundle || typeof bundle.sessions !== 'string') return false;
+    try {
+      localStorage.setItem(STORAGE_KEY, bundle.sessions);
+      if (typeof bundle.settings === 'string') localStorage.setItem(SETTINGS_KEY, bundle.settings);
+      if (typeof bundle.characters === 'string') localStorage.setItem(CHARACTERS_KEY, bundle.characters);
+      if (typeof bundle.activeCharacter === 'string') localStorage.setItem(ACTIVE_CHAR_KEY, bundle.activeCharacter);
+      return true;
+    } catch (e) { return false; }
+  }
+  function localNewestTs() {
+    try {
+      const st = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+      let m = 0;
+      (st.sessions || []).forEach((s) => {
+        // 忽略自动创建的空会话（无消息且标题为默认的"新会话"），避免它抢在云同步前
+        const real = (s.messages && s.messages.length > 0) || (s.title && s.title !== '新会话');
+        if (real) m = Math.max(m, s.updatedAt || 0);
+      });
+      return m;
+    } catch (e) { return 0; }
+  }
+  function setCloudStatus(msg) {
+    const el = $('cloudStatus');
+    if (el) el.textContent = msg;
+  }
+  async function cloudPullRaw() {
+    const url = `https://api.github.com/repos/${CLOUD_REPO}/contents/${CLOUD_PATH}?ref=${CLOUD_BRANCH}`;
+    const resp = await fetch(url, { headers: { 'Accept': 'application/vnd.github.v3+json' } });
+    if (resp.status === 404) return { exists: false };
+    if (!resp.ok) throw new Error('拉取失败 HTTP ' + resp.status);
+    const data = await resp.json();
+    // GitHub 返回的 content 是「文件字节」的 base64；解码回加密文本串再交给 decrypt
+    const fileBytes = b64ToBytes((data.content || '').replace(/\s/g, ''));
+    const encryptedText = new TextDecoder().decode(fileBytes);
+    return { exists: true, content: encryptedText, sha: data.sha };
+  }
+  async function cloudPushRaw(encryptedText, sha) {
+    const token = (loadSettings().cloudToken || '').trim();
+    if (!token) throw new Error('未填写同步 Token');
+    const body = {
+      message: 'sync lzh-chat data',
+      content: bytesToB64(new TextEncoder().encode(encryptedText)),
+      branch: CLOUD_BRANCH,
+    };
+    if (sha) body.sha = sha;
+    const resp = await fetch(`https://api.github.com/repos/${CLOUD_REPO}/contents/${CLOUD_PATH}`, {
+      method: 'PUT',
+      headers: { 'Authorization': 'token ' + token, 'Content-Type': 'application/json', 'Accept': 'application/vnd.github.v3+json' },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      const t = await resp.text();
+      throw new Error('上传失败 HTTP ' + resp.status + ' ' + t.slice(0, 160));
+    }
+    return resp.json();
+  }
+  async function cloudPush() {
+    if (!cloudSupported()) { setCloudStatus('当前环境不支持加密同步'); return; }
+    const settings = loadSettings();
+    if (!settings.cloudToken) { setCloudStatus('未填写同步 Token，仅本地保存'); return; }
+    try {
+      setCloudStatus('正在上传到云端…');
+      const key = await deriveCloudKey(AUTH_PASS);
+      const encrypted = await encryptCloud(buildCloudBundle(), key);
+      let sha = lastCloudSha;
+      if (!sha || sha === 'fresh') {
+        try { const r = await cloudPullRaw(); if (r.exists) sha = r.sha; } catch (e) {}
+      }
+      const res = await cloudPushRaw(encrypted, sha);
+      lastCloudSha = res.sha || 'fresh';
+      setCloudStatus('已上传到云端 ✓ ' + new Date().toLocaleTimeString());
+    } catch (e) {
+      setCloudStatus('上传失败：' + (e.message || e));
+    }
+  }
+  async function cloudPull(opts) {
+    opts = opts || {};
+    if (!cloudSupported()) { setCloudStatus('当前环境不支持加密同步'); return; }
+    try {
+      setCloudStatus('正在从云端同步…');
+      const r = await cloudPullRaw();
+      if (!r.exists) { setCloudStatus('云端暂无数据（可点「上传到云端」创建）'); return; }
+      const key = await deriveCloudKey(AUTH_PASS);
+      const bundle = await decryptCloud(r.content, key);
+      lastCloudSha = r.sha;
+      const localNewest = localNewestTs();
+      const cloudNewer = (bundle.updatedAt || 0) > localNewest;
+      if (opts.applyIfNewer && !cloudNewer && localNewest > 0) {
+        setCloudStatus('本地已是最新');
+        return;
+      }
+      const ok = applyCloudBundle(bundle);
+      if (!ok) { setCloudStatus('云端数据无法应用'); return; }
+      const loaded = loadSessions(); if (loaded) state = loaded;
+      state.currentCharacterId = loadActiveCharacter();
+      ensureCurrentSession();
+      renderAll();
+      if (state.view === 'home') enterHomeView(false); else enterChatView();
+      setCloudStatus('已从云端同步 ✓ ' + new Date().toLocaleTimeString());
+    } catch (e) {
+      setCloudStatus('同步失败：' + (e.message || e));
+    }
+  }
+  function scheduleCloudPush() {
+    const settings = loadSettings();
+    if (!settings.cloudAuto) return;
+    if (!settings.cloudToken) return;
+    if (!cloudSupported()) return;
+    if (cloudPushTimer) clearTimeout(cloudPushTimer);
+    cloudPushTimer = setTimeout(() => { cloudPushTimer = null; cloudPush(); }, 1500);
+  }
+
   function init() {
     bindLoginEvents();
     if (!isLoggedIn()) {
@@ -1541,6 +1743,7 @@
     $('saveSettingsBtn').addEventListener('click', () => {
       const s = collectSettingsFromForm();
       saveSettings(s);
+      scheduleCloudPush();
       alert('设置已保存');
       closeSettings();
     });
@@ -1552,6 +1755,7 @@
       }
       if (confirm('确定清空当前角色的所有对话？此操作不可恢复。')) {
         clearCurrentCharacterSessions();
+        scheduleCloudPush();
         closeSettings();
       }
     });
@@ -1588,6 +1792,13 @@
     // 初始按钮状态
     updateSendButton();
     input.focus();
+
+    // 云同步：手动按钮 + 启动后自动从云端拉取（若云端更新则合并）
+    const cpBtn = $('cloudPullBtn');
+    if (cpBtn) cpBtn.addEventListener('click', () => cloudPull({ applyIfNewer: false }));
+    const cuBtn = $('cloudPushBtn');
+    if (cuBtn) cuBtn.addEventListener('click', () => cloudPush());
+    cloudPull({ applyIfNewer: true });
   }
 
   /* ============================================
@@ -1807,6 +2018,7 @@
     if (state.currentCharacterId === c.id) renderCharacterHeader();
     renderHome();
     closeCharacterModal();
+    scheduleCloudPush();
     alert('已保存');
   }
 
