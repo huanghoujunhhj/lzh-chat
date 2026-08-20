@@ -182,7 +182,7 @@
             <button class="btn-primary" id="saveSettingsBtn" type="button">保存</button>
           </div>
           <div class="setting-hint">
-            ⚠️ API Key 仅保存在你本地浏览器，不会上传服务器。若遇跨域问题，可配合 Cloudflare Worker 中转。
+            ⚠️ API Key 会随云同步（用你的登录密码加密）上传到 GitHub 仓库文件。仅在可信设备开启同步；开启后其他设备登录同一账户也能用这个 Key。若遇跨域问题，可配合 Cloudflare Worker 中转。
           </div>
         </div>
 
@@ -207,6 +207,31 @@
             <option value="180">3 分钟</option>
           </select>
         </div>
+
+        <div class="setting-divider"></div>
+
+        <div class="setting-section-title">☁️ 云同步（跨设备共享同一账户）</div>
+        <div class="setting-hint">
+          数据会用你的登录密码加密后存到 GitHub 仓库文件。在其他设备登录同一账户，即可下载到同一份聊天记录和 API Key。仓库文件本身公开，但内容是加密的，没有密码打不开。
+        </div>
+        <div class="setting-row">
+          <label for="cloudTokenInput">同步 Token（GitHub，仅用于读写云数据）</label>
+          <input id="cloudTokenInput" type="password" placeholder="ghp_... 或 fine-grained token" autocomplete="off" />
+        </div>
+        <div class="setting-row">
+          <label class="switch-label">
+            <span>自动同步（发消息 / 改动后自动上传）</span>
+            <label class="switch">
+              <input type="checkbox" id="cloudAutoToggle" />
+              <span class="slider"></span>
+            </label>
+          </label>
+        </div>
+        <div class="setting-row inline">
+          <button class="btn-secondary" id="cloudPullBtn" type="button">从云端下载</button>
+          <button class="btn-primary" id="cloudPushBtn" type="button">上传到云端</button>
+        </div>
+        <div class="setting-hint" id="cloudStatus">未同步</div>
 
         <div class="setting-divider"></div>
 
