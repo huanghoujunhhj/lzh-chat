@@ -61,6 +61,12 @@
     proactiveInterval: 90, // 沉默多少秒后，TA 主动开口
   };
 
+  // 登录门禁：本应用（刘梓菡分身）为「黄厚钧」账户独有
+  const AUTH_USER = '黄厚钧';
+  const AUTH_PASS = '20111102';
+  const AUTH_KEY = 'chat-auth-lzh';
+  let appBooted = false;
+
   // 一键预设：点一下自动填 Base URL + 模型，Key 用户自己填
   // 不出现 user 的敏感信息；统一国际/国内主流入口
   const PRESETS = [
@@ -1440,7 +1446,45 @@
   /* ============================================
    * 启动
    * ============================================ */
+  function isLoggedIn() {
+    try { return localStorage.getItem(AUTH_KEY) === '1'; } catch (e) { return false; }
+  }
+  function bindLoginEvents() {
+    const lb = $('loginBtn');
+    if (lb) lb.addEventListener('click', doLogin);
+    const lu = $('loginUser');
+    if (lu) lu.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); const p = $('loginPass'); if (p) p.focus(); }
+    });
+    const lp = $('loginPass');
+    if (lp) lp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); doLogin(); }
+    });
+  }
+  function doLogin() {
+    const u = ($('loginUser').value || '').trim();
+    const p = $('loginPass').value || '';
+    const err = $('loginError');
+    if (u === AUTH_USER && p === AUTH_PASS) {
+      try { localStorage.setItem(AUTH_KEY, '1'); } catch (e) {}
+      if (err) err.hidden = true;
+      location.reload();
+    } else {
+      if (err) { err.textContent = '账户名或密码错误，请重试'; err.hidden = false; }
+    }
+  }
+  function doLogout() {
+    try { localStorage.removeItem(AUTH_KEY); } catch (e) {}
+    location.reload();
+  }
+
   function init() {
+    bindLoginEvents();
+    if (!isLoggedIn()) {
+      document.body.classList.add('logged-out');
+      return; // 未登录：只显示登录屏，不进入应用
+    }
+    document.body.classList.add('logged-in');
     // 加载会话
     const loaded = loadSessions();
     if (loaded) {
@@ -1518,6 +1562,8 @@
     const switchBtn = $('switchCharBtn');
     if (switchBtn) switchBtn.addEventListener('click', () => enterHomeView(true));
     $('closeCharacterBtn').addEventListener('click', closeCharacterModal);
+    const loBtn = $('logoutBtn');
+    if (loBtn) loBtn.addEventListener('click', doLogout);
     $('characterBackdrop').addEventListener('click', closeCharacterModal);
     $('saveCharacterBtn').addEventListener('click', saveCharacterFromForm);
     $('deleteCharacterBtn').addEventListener('click', deleteCharacterFromForm);
