@@ -172,6 +172,28 @@
         <div class="setting-divider"></div>
 
         <div class="setting-row">
+          <label class="switch-label">
+            <span>主动互动（TA 会主动找你搭话、分享小事）</span>
+            <label class="switch">
+              <input type="checkbox" id="proactiveToggle" />
+              <span class="slider"></span>
+            </label>
+          </label>
+        </div>
+        <div class="setting-row" id="proactiveIntervalRow">
+          <label for="proactiveInterval">沉默多久后，TA 主动开口</label>
+          <select id="proactiveInterval">
+            <option value="30">30 秒</option>
+            <option value="60">1 分钟</option>
+            <option value="90">1.5 分钟</option>
+            <option value="120">2 分钟</option>
+            <option value="180">3 分钟</option>
+          </select>
+        </div>
+
+        <div class="setting-divider"></div>
+
+        <div class="setting-row">
           <button class="btn-danger" id="clearAllInSettingsBtn" type="button">清空当前角色所有对话记录</button>
         </div>
       </div>
