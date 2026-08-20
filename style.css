@@ -948,6 +948,13 @@ textarea {
   margin: 16px 0;
 }
 
+.setting-section-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 4px 0 8px;
+}
+
 .btn-primary,
 .btn-secondary,
 .btn-danger {
