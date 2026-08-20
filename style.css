@@ -1048,6 +1048,99 @@ body.view-chat .home-back-btn {
   display: flex;
 }
 
+/* ============== 登录门禁 ============== */
+.login-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #ffd9e3 0%, #f5f5f7 55%, #e9f5ff 100%);
+  padding: 20px;
+}
+body.logged-in .login-screen {
+  display: none !important;
+}
+body:not(.logged-in) .app {
+  display: none !important;
+}
+.login-card {
+  width: 100%;
+  max-width: 360px;
+  background: #fff;
+  border-radius: 20px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.15);
+  padding: 36px 28px 30px;
+  text-align: center;
+}
+.login-logo {
+  font-size: 46px;
+  line-height: 1;
+  margin-bottom: 8px;
+}
+.login-title {
+  margin: 0 0 4px;
+  font-size: 22px;
+  font-weight: 700;
+  color: #1d1d1f;
+}
+.login-sub {
+  margin: 0 0 22px;
+  font-size: 13px;
+  color: #86868b;
+}
+.login-form {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+}
+.login-label {
+  font-size: 13px;
+  color: #515154;
+  margin: 10px 0 6px;
+}
+.login-input {
+  width: 100%;
+  background: #f5f5f7;
+  border: 1px solid #e3e3e6;
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 15px;
+  outline: none;
+  font-family: var(--font);
+  color: #1d1d1f;
+  box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+.login-input:focus {
+  border-color: #ff8fa3;
+}
+.login-error {
+  margin: 12px 0 0;
+  font-size: 13px;
+  color: #e02e4f;
+}
+.login-btn {
+  margin-top: 20px;
+  width: 100%;
+  background: linear-gradient(135deg, #ff8fa3, #ff6f91);
+  color: #fff;
+  border: none;
+  border-radius: 12px;
+  padding: 13px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.08s, box-shadow 0.15s;
+}
+.login-btn:hover {
+  box-shadow: 0 8px 20px rgba(255, 111, 145, 0.35);
+}
+.login-btn:active {
+  transform: scale(0.98);
+}
+
 /* ============== 主页（角色选择） ============== */
 .home-view {
   position: relative;
