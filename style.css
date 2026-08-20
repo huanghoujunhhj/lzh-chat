@@ -909,6 +909,19 @@ textarea {
   transform: translateX(18px);
 }
 
+.setting-row select {
+  width: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  padding: 9px 12px;
+  font-size: 14px;
+  outline: none;
+  font-family: var(--font);
+  color: var(--text);
+  cursor: pointer;
+}
+
 .setting-group {
   margin-top: 12px;
   padding: 12px;
