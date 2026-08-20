@@ -685,11 +685,13 @@
       addMessageToCurrent('assistant', reply);
     } catch (e) {
       console.error(e);
-      replaceTypingWith(
-        typingNode,
-        'assistant',
-        '啊…网络好像出问题了，刷新一下试试？'
-      );
+      // 同样先落库再重渲染，避免这条回复成为"幽灵消息"在下次发送后消失
+      const errText = '啊…网络好像出问题了，刷新一下试试？';
+      if (typingNode && typingNode.parentNode) {
+        try { typingNode.remove(); } catch (e2) {}
+      }
+      addMessageToCurrent('assistant', errText);
+      renderMessages();
     } finally {
       isThinking = false;
       updateSendButton();
@@ -1014,15 +1016,25 @@
     return !!(s.useRealAi && s.apiKey && s.baseUrl && s.model);
   }
 
+  // 显示一条分身主动说的话，并写入会话数据（持久化）。
+  // 关键：先 addMessageToCurrent 落库，再 renderMessages 从数据重渲染，
+  // 这样自动回复一定存在于 session.messages，绝不会在下次发送时"幽灵消失"。
+  function finishProactive(typingNode, content) {
+    addMessageToCurrent('assistant', content);
+    lastProactiveAt = Date.now();
+    proactiveCount++;
+    if (typingNode && typingNode.parentNode) {
+      try { typingNode.remove(); } catch (e) {}
+    }
+    renderMessages();
+  }
+
   // 把一条分身主动说的话显示出来（带打字动画 + 持久化）
   function appendProactiveMessage(content) {
     const typingNode = appendTyping();
     const delay = 500 + Math.random() * 700;
     setTimeout(() => {
-      replaceTypingWith(typingNode, 'assistant', content);
-      addMessageToCurrent('assistant', content);
-      lastProactiveAt = Date.now();
-      proactiveCount++;
+      finishProactive(typingNode, content);
     }, delay);
   }
 
@@ -1092,14 +1104,12 @@
         await new Promise((r) => setTimeout(r, 500 + Math.random() * 900));
         reply = generateProactiveReply(getCurrentCharacter(), session.messages, kind);
       }
-      replaceTypingWith(typingNode, 'assistant', reply);
-      addMessageToCurrent('assistant', reply);
-      lastProactiveAt = Date.now();
-      proactiveCount++;
+      // 先落库 + 从数据重渲染，保证自动回复不会在下次发送时丢失
+      finishProactive(typingNode, reply);
     } catch (e) {
       console.error(e);
-      replaceTypingWith(typingNode, 'assistant', '（戳了戳你）诶，你还在吗？');
-      lastProactiveAt = Date.now();
+      // 出错也要保留这条自动回复，避免它只是"幽灵消息"在下次发送后消失
+      finishProactive(typingNode, '（戳了戳你）诶，你还在吗？');
     } finally {
       isThinking = false;
       updateSendButton();
