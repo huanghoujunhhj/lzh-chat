@@ -648,6 +648,69 @@ textarea {
   border-bottom-right-radius: 4px;
 }
 
+/* ============== 用户消息：撤回 / 修改 ============== */
+.msg-row { flex-wrap: wrap; }
+.user-bubble { cursor: pointer; transition: filter 0.15s; }
+.user-bubble:hover { filter: brightness(0.96); }
+.user-bubble::after {
+  content: '✎';
+  position: absolute;
+  top: 2px;
+  right: -18px;
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity 0.15s;
+  color: var(--text-3);
+}
+.user-bubble:hover::after { opacity: 0.6; }
+
+.msg-actions {
+  flex-basis: 100%;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 2px;
+}
+.msg-actions[hidden] { display: none; }
+
+.msg-action-btn {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.msg-action-btn:hover { background: var(--surface-2); }
+.msg-action-btn.primary { background: var(--primary); color: #fff; border-color: transparent; }
+.msg-action-btn.primary:hover { filter: brightness(1.05); }
+
+.msg-edit-area {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-end;
+}
+.msg-edit-input {
+  width: 70%;
+  min-height: 64px;
+  resize: vertical;
+  padding: 10px 12px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--primary);
+  background: #fff;
+  color: #1a3a1a;
+  font-size: 15px;
+  line-height: 1.5;
+  font-family: inherit;
+  box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.15);
+}
+.msg-edit-btns { display: flex; gap: 8px; }
+.msg-bubble[hidden] { display: none; }
+
 .msg-time {
   font-size: 11px;
   color: var(--text-3);
