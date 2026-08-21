@@ -558,12 +558,163 @@
     }
 
     const bubble = document.createElement('div');
-    bubble.className = 'msg-bubble';
+    bubble.className = 'msg-bubble' + (m.role === 'user' ? ' user-bubble' : '');
     bubble.textContent = m.content;
 
     row.appendChild(avatar);
     row.appendChild(bubble);
+
+    // 用户自己的消息：支持「点击 → 撤回 / 修改」
+    if (m.role === 'user') {
+      const actions = document.createElement('div');
+      actions.className = 'msg-actions';
+      actions.hidden = true;
+
+      const recallBtn = document.createElement('button');
+      recallBtn.type = 'button';
+      recallBtn.className = 'msg-action-btn';
+      recallBtn.textContent = '撤回消息';
+      recallBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        recallMessage(m);
+      });
+
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'msg-action-btn';
+      editBtn.textContent = '修改消息';
+      editBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        enterEditMode(row, m);
+      });
+
+      actions.appendChild(recallBtn);
+      actions.appendChild(editBtn);
+      row.appendChild(actions);
+
+      bubble.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (isThinking || editingMsg) return;
+        document.querySelectorAll('.msg-actions').forEach((a) => {
+          if (a !== actions) a.hidden = true;
+        });
+        actions.hidden = !actions.hidden;
+      });
+    }
+
     return row;
+  }
+
+  // 点击「撤回消息」：删除这条用户消息，以及 AI 对它（紧跟其后的）的回复
+  function recallMessage(m) {
+    const session = getCurrentSession();
+    if (!session) return;
+    const idx = session.messages.indexOf(m);
+    if (idx < 0) return;
+    session.messages.splice(idx, 1); // 删掉用户消息
+    if (session.messages[idx] && session.messages[idx].role === 'assistant') {
+      session.messages.splice(idx, 1); // 删掉紧跟其后的 AI 回复
+    }
+    persist();
+    renderMessages();
+    scheduleCloudPush();
+  }
+
+  // 点击「修改消息」：进入就地编辑（textarea + 取消/完成）
+  function enterEditMode(row, m) {
+    if (isThinking || editingMsg) return;
+    editingMsg = m;
+    if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
+    const actions = row.querySelector('.msg-actions');
+    if (actions) actions.hidden = true;
+    const bubble = row.querySelector('.msg-bubble');
+    if (!bubble) return;
+    bubble.hidden = true;
+
+    const editArea = document.createElement('div');
+    editArea.className = 'msg-edit-area';
+    const ta = document.createElement('textarea');
+    ta.className = 'msg-edit-input';
+    ta.value = m.content;
+    const btnRow = document.createElement('div');
+    btnRow.className = 'msg-edit-btns';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'msg-action-btn';
+    cancelBtn.textContent = '取消';
+    cancelBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      exitEditMode(row, bubble, editArea);
+    });
+    const doneBtn = document.createElement('button');
+    doneBtn.type = 'button';
+    doneBtn.className = 'msg-action-btn primary';
+    doneBtn.textContent = '完成';
+    doneBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const txt = ta.value.trim();
+      if (!txt || txt === m.content) {
+        // 空内容或没改 → 等同取消
+        exitEditMode(row, bubble, editArea);
+        return;
+      }
+      editingMsg = null;
+      applyEditAndResend(m, txt);
+    });
+    btnRow.appendChild(cancelBtn);
+    btnRow.appendChild(doneBtn);
+    editArea.appendChild(ta);
+    editArea.appendChild(btnRow);
+    row.appendChild(editArea);
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+  }
+
+  function exitEditMode(row, bubble, editArea) {
+    editingMsg = null;
+    if (editArea) editArea.remove();
+    if (bubble) bubble.hidden = false;
+  }
+
+  // 点击「完成」：以修改后的内容重发，并删除原消息（修改前）及其对应的 AI 回复，
+  // 重新让 AI 基于新内容生成回复（同时丢弃它之后所有依赖旧内容的对话）
+  async function applyEditAndResend(m, newText) {
+    const session = getCurrentSession();
+    if (!session) return;
+    const idx = session.messages.indexOf(m);
+    if (idx < 0) return;
+    // 从这条消息开始（含）及其之后全部删除，避免上下文错乱
+    session.messages = session.messages.slice(0, idx);
+    session.messages.push({ role: 'user', content: newText, ts: now() });
+    persist();
+    renderMessages();
+
+    isThinking = true;
+    updateSendButton();
+    const typingNode = appendTyping();
+    try {
+      const settings = loadSettings();
+      let reply;
+      if (realAiOn(settings)) {
+        reply = await callRealAI(settings, session.messages);
+      } else {
+        reply = await callLocalBot(newText, session.messages);
+      }
+      replaceTypingWith(typingNode, 'assistant', reply);
+      addMessageToCurrent('assistant', reply);
+    } catch (e) {
+      console.error(e);
+      const errText = '啊…网络好像出问题了，刷新一下试试？';
+      if (typingNode && typingNode.parentNode) {
+        try { typingNode.remove(); } catch (e2) {}
+      }
+      addMessageToCurrent('assistant', errText);
+      renderMessages();
+    } finally {
+      isThinking = false;
+      updateSendButton();
+    }
+    scheduleProactive();
   }
 
   function buildTypingNode() {
@@ -640,6 +791,7 @@
    * 发送 & AI 响应
    * ============================================ */
   let isThinking = false;
+  let editingMsg = null;               // 正在编辑（修改）的用户消息对象
 
   // 主动互动引擎状态
   let silenceTimer = null;            // 沉默后主动搭话的计时器
@@ -1083,6 +1235,7 @@
   // 真正发起一条主动消息（本地或真实 AI）
   async function sendProactiveMessage(kind) {
     if (isThinking) return;
+    if (editingMsg) return; // 正在修改消息时不打扰，避免重渲染冲掉编辑框
     const settings = loadSettings();
     if (!settings.proactiveEnabled) return;
     if (Date.now() - lastProactiveAt < MIN_PROACTIVE_GAP) return;
@@ -1798,6 +1951,13 @@
       }
     });
     $('sendBtn').addEventListener('click', handleSend);
+
+    // 点击空白处关闭消息操作条（撤回 / 修改）
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.msg-row.user')) {
+        document.querySelectorAll('.msg-actions').forEach((a) => { a.hidden = true; });
+      }
+    });
 
     // 初始按钮状态
     updateSendButton();
