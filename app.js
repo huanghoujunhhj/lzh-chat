@@ -887,6 +887,8 @@
         sys += ' 用户刚才离开了一会儿又回来了，可以自然地调侃或问候"你去哪了"。';
       }
     }
+    // 叙事 / 旁白识别：用户用（注：…）或整段括号包裹时，那是旁白 / 第三人称，不是本人台词
+    sys += '\n\n【叙事/旁白识别】如果用户的某条消息以「（注：」开头、或被整段括号包裹（例如动作、神态、场景描写、第三人称叙事），那不是用户本人直接对你说的话，而是旁白 / 第三人称叙事。请把它当作剧情或动作描写来理解，自然地融入角色扮演去回应或推进，不要误把旁白当成用户自己的台词来回答，也不要说"收到备注""看到了注释"这类出戏的话。保持刘梓菡的语气和性格。';
     const payload = {
       model: settings.model,
       messages: [
@@ -949,9 +951,30 @@
     return `（${pick(acts)}）${pick(contents)}`;
   }
 
+  // 判断一条用户消息是否是「旁白 / 第三人称叙事」（角色扮演格式）
+  function isNarration(text) {
+    const t = String(text || '').trim();
+    if (!t) return false;
+    if (/^[（(]\s*注\s*[:：]/.test(t)) return true;        // 显式旁白标记：（注：… / (注：…
+    if (/^[（(][\s\S]*[）)]$/.test(t)) return true;         // 整条被括号包裹，视为动作/神态描写
+    return false;
+  }
+  const NARRATION_REPLIES = [
+    '（挑了挑眉）你这旁白写得还挺带感，演上了是吧？',
+    '（轻笑）第三人称叙事啊，行，我配合你一下。',
+    '哦？所以现在场景是这样的咯，懂了，我接。',
+    '（歪头看你）你这是在给我加戏呢？不过还挺有意思的。',
+    '（托着腮）嗯，这描写我收下了，那接下来咋样你说？',
+    '（凑近了些）你这括号里的戏，我可都看在眼里了哈。',
+  ];
+
   function generateLzhReply(userText, allMessages) {
     const text = String(userText || '').trim();
     const lower = text.toLowerCase();
+    // 旁白 / 第三人称叙事：不当成用户本人台词，给个在角色内的反应
+    if (isNarration(text)) {
+      return pick(NARRATION_REPLIES);
+    }
     const intent = detectIntent(text, lower);
     const mood = detectMood(allMessages);
 
