@@ -135,6 +135,15 @@
       hint: '国内注册送免费额度，默认 Qwen3-8B 完全免费不耗额度',
     },
     {
+      id: 'qwen',
+      name: '通义千问',
+      tag: 'Qwen',
+      icon: '🌟',
+      baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      model: 'qwen-vl-max',
+      hint: '阿里通义千问，支持图片/视频识别；想省费用可把模型改成 qwen-plus / qwen-max（纯文本）',
+    },
+    {
       id: 'custom',
       name: '自定义',
       tag: '',
@@ -439,7 +448,27 @@
   }
 
   function persist() {
-    saveSessions(state);
+    try {
+      saveSessions(state);
+    } catch (e) {
+      // 配额超限（常见于大视频）：剥离附件二进制后重试，保留对话结构
+      try {
+        const stripped = JSON.parse(JSON.stringify(state, (k, v) => {
+          if (k === 'dataUrl') return undefined; // 丢弃图片/视频二进制
+          return v;
+        }));
+        stripped.sessions.forEach((s) => s.messages.forEach((m) => {
+          if (m.attachments) m.attachments.forEach((a) => { a.detached = true; });
+        }));
+        saveSessions(stripped);
+        if (!persist._warned) {
+          persist._warned = true;
+          toast('本地存储已满，部分图片/视频仅本次对话可见（刷新后不可见）。可在设置里清空对话。');
+        }
+      } catch (e2) {
+        console.error('持久化彻底失败：', e2);
+      }
+    }
   }
 
   /* ============================================
@@ -560,6 +589,43 @@
     const bubble = document.createElement('div');
     bubble.className = 'msg-bubble' + (m.role === 'user' ? ' user-bubble' : '');
     bubble.textContent = m.content;
+
+    // 网页来源标记
+    if (m.web && m.web.text) {
+      const chip = document.createElement('div');
+      chip.className = 'msg-web';
+      chip.textContent = '🌐 已读取网页：' + m.web.url;
+      bubble.appendChild(chip);
+    }
+    // 图片 / 视频附件
+    if (m.attachments && m.attachments.length) {
+      const mediaWrap = document.createElement('div');
+      mediaWrap.className = 'msg-media';
+      m.attachments.forEach((a) => {
+        if (a.type === 'image') {
+          const img = document.createElement('img');
+          img.src = a.dataUrl;
+          img.alt = a.name || '图片';
+          img.className = 'msg-media-img';
+          img.loading = 'lazy';
+          mediaWrap.appendChild(img);
+        } else {
+          const v = document.createElement('video');
+          v.src = a.dataUrl;
+          v.controls = true;
+          v.className = 'msg-media-video';
+          mediaWrap.appendChild(v);
+        }
+      });
+      bubble.appendChild(mediaWrap);
+    }
+    // 已被剥离二进制（本地存储超限）的附件，给出占位提示
+    if (m.attachments && m.attachments.length && m.attachments[0].detached) {
+      const note = document.createElement('div');
+      note.className = 'msg-detached';
+      note.textContent = '（此消息包含的图片/视频因本地存储已满，刷新后不可见）';
+      bubble.appendChild(note);
+    }
 
     row.appendChild(avatar);
     row.appendChild(bubble);
@@ -685,7 +751,13 @@
     if (idx < 0) return;
     // 从这条消息开始（含）及其之后全部删除，避免上下文错乱
     session.messages = session.messages.slice(0, idx);
-    session.messages.push({ role: 'user', content: newText, ts: now() });
+    session.messages.push({
+      role: 'user',
+      content: newText,
+      ts: now(),
+      attachments: m.attachments ? m.attachments.slice() : undefined,
+      web: m.web || undefined,
+    });
     persist();
     renderMessages();
 
@@ -793,6 +865,158 @@
   let isThinking = false;
   let editingMsg = null;               // 正在编辑（修改）的用户消息对象
 
+  /* ============================================
+   * 多模态：附件（图片/视频）+ 网页读取
+   * ============================================ */
+  let pendingAttachments = [];   // [{type:'image'|'video', dataUrl, name}]
+  let pendingWeb = null;         // {url, text} | null
+  const MAX_IMG_BYTES = 10 * 1024 * 1024;
+  const MAX_VIDEO_BYTES = 60 * 1024 * 1024;
+
+  function isRealAiActive() {
+    const s = loadSettings();
+    return realAiOn(s) && s.apiKey && s.baseUrl && s.model;
+  }
+
+  function toast(msg) {
+    let el = document.getElementById('toast');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'toast';
+      el.className = 'toast';
+      document.body.appendChild(el);
+    }
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => el.classList.remove('show'), 2800);
+  }
+
+  function refreshComposerHint() {
+    const hint = $('composerHint');
+    if (!hint) return;
+    if (isRealAiActive()) {
+      hint.textContent = '真实 AI 已开启：可发送图片 / 视频，或点 🌐 读取网页';
+      hint.classList.remove('warn');
+    } else {
+      hint.textContent = '未开启真实 AI（千问等）——图片/视频/网页功能不可用，请到「设置」开启';
+      hint.classList.add('warn');
+    }
+  }
+
+  function readFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+      r.readAsDataURL(file);
+    });
+  }
+
+  async function addFiles(fileList) {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    for (const f of files) {
+      const isImg = f.type.startsWith('image/');
+      const isVid = f.type.startsWith('video/');
+      if (!isImg && !isVid) { toast('仅支持图片或视频：' + (f.name || '')); continue; }
+      const limit = isImg ? MAX_IMG_BYTES : MAX_VIDEO_BYTES;
+      if (f.size > limit) {
+        toast((isImg ? '图片' : '视频') + '过大（>' + Math.round(limit / 1048576) + 'MB），已跳过：' + (f.name || ''));
+        continue;
+      }
+      try {
+        const dataUrl = await readFileAsDataUrl(f);
+        pendingAttachments.push({ type: isImg ? 'image' : 'video', dataUrl, name: f.name });
+      } catch (e) { toast('读取失败：' + (f.name || '')); }
+    }
+    renderAttachTray();
+    refreshComposerHint();
+  }
+
+  function renderAttachTray() {
+    const tray = $('attachTray');
+    if (!tray) return;
+    tray.innerHTML = '';
+    const hasItems = pendingAttachments.length || pendingWeb;
+    tray.hidden = !hasItems;
+    if (!hasItems) return;
+
+    pendingAttachments.forEach((a, i) => {
+      const item = document.createElement('div');
+      item.className = 'attach-thumb';
+      const media = a.type === 'image'
+        ? Object.assign(document.createElement('img'), { src: a.dataUrl, alt: a.name || '图片' })
+        : Object.assign(document.createElement('video'), { src: a.dataUrl, muted: true });
+      item.appendChild(media);
+      const rm = document.createElement('button');
+      rm.type = 'button';
+      rm.className = 'attach-remove';
+      rm.textContent = '×';
+      rm.title = '移除';
+      rm.addEventListener('click', () => { pendingAttachments.splice(i, 1); renderAttachTray(); });
+      item.appendChild(rm);
+      tray.appendChild(item);
+    });
+
+    if (pendingWeb) {
+      const chip = document.createElement('div');
+      chip.className = 'web-chip';
+      const label = pendingWeb.url.length > 44 ? pendingWeb.url.slice(0, 44) + '…' : pendingWeb.url;
+      chip.textContent = (pendingWeb.loading ? '抓取中… ' : '🌐 ') + label;
+      const rm = document.createElement('button');
+      rm.type = 'button';
+      rm.className = 'attach-remove';
+      rm.textContent = '×';
+      rm.title = '移除网页';
+      rm.addEventListener('click', () => { pendingWeb = null; renderAttachTray(); });
+      chip.appendChild(rm);
+      tray.appendChild(chip);
+    }
+  }
+
+  async function handleWebUrl() {
+    const url = (window.prompt('粘贴要读取的网页网址（URL）：', 'https://') || '').trim();
+    if (!url || url === 'https://') return;
+    if (!/^https?:\/\//i.test(url)) { toast('请输入以 http(s):// 开头的网址'); return; }
+    pendingWeb = { url, text: '', loading: true };
+    renderAttachTray();
+    try {
+      // 用 Jina Reader 在服务端抓取并提取正文，绕过浏览器跨域限制
+      const resp = await fetch('https://r.jina.ai/' + encodeURIComponent(url), { redirect: 'follow' });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      let text = await resp.text();
+      text = text.slice(0, 12000); // 控制长度，避免超出模型上下文
+      pendingWeb = { url, text };
+      toast('网页已读取，可以直接提问啦');
+    } catch (e) {
+      console.error(e);
+      pendingWeb = null;
+      toast('抓取失败（可能该站点限制或网络问题）。你可以直接把网页文字复制粘贴到输入框。');
+    }
+    renderAttachTray();
+  }
+
+  // 把带附件/网页的用户消息写入会话（保留标题逻辑）
+  function pushUserMessage(text, attachments, web) {
+    const session = getCurrentSession();
+    if (!session) return;
+    const msg = { role: 'user', content: text || '', ts: now() };
+    if (attachments && attachments.length) msg.attachments = attachments;
+    if (web) msg.web = web;
+    session.messages.push(msg);
+    session.updatedAt = now();
+    if (session.title === '新会话') {
+      let label = (text && text.trim()) ? text.trim()
+        : (attachments && attachments[0]) ? (attachments[0].type === 'image' ? '[图片]' : '[视频]')
+        : (web ? '[网页]' : '新会话');
+      session.title = label.slice(0, TITLE_MAX) + (label.length > TITLE_MAX ? '…' : '');
+    }
+    persist();
+    renderSessionList();
+    scheduleCloudPush();
+  }
+
   // 主动互动引擎状态
   let silenceTimer = null;            // 沉默后主动搭话的计时器
   let lastProactiveAt = 0;            // 上一次主动消息的时间戳
@@ -806,10 +1030,23 @@
     if (isThinking) return;
     const input = $('input');
     const text = input.value.trim();
-    if (!text) return;
+    // 允许"只有附件/网页、没有文字"也能发送
+    if (!text && !pendingAttachments.length && !pendingWeb) return;
     if (!getCurrentSession()) ensureCurrentSession();
 
-    addMessageToCurrent('user', text);
+    // 多模态（图片/视频/网页）必须走真实 AI；本地机器人看不了
+    if ((pendingAttachments.length || pendingWeb) && !isRealAiActive()) {
+      toast('请先在「设置」里开启真实 AI（千问等）再发送图片 / 视频 / 网页');
+      return;
+    }
+
+    const attachments = pendingAttachments.slice();
+    const web = pendingWeb || null;
+
+    pushUserMessage(text, attachments, web);
+    pendingAttachments = [];
+    pendingWeb = null;
+    renderAttachTray();
     input.value = '';
     autoResizeInput();
     updateSendButton();
@@ -893,10 +1130,25 @@
       model: settings.model,
       messages: [
         { role: 'system', content: sys },
-        ...messages.map((m) => ({ role: m.role, content: m.content })),
+        ...messages.map((m) => {
+          // 多模态：带附件（图片/视频）或网页内容的消息，改用 content 数组
+          if ((m.attachments && m.attachments.length) || m.web) {
+            const parts = [];
+            if (m.web && m.web.text) {
+              parts.push({ type: 'text', text: '【网页内容】（来源 ' + m.web.url + '）\n' + m.web.text });
+            }
+            if (m.content) parts.push({ type: 'text', text: m.content });
+            (m.attachments || []).forEach((a) => {
+              const kind = a.type === 'video' ? 'video_url' : 'image_url';
+              parts.push({ type: kind, [kind]: { url: a.dataUrl } });
+            });
+            return { role: m.role, content: parts };
+          }
+          return { role: m.role, content:  m.content };
+        }),
       ],
       temperature: 0.85,
-      max_tokens: 500,
+      max_tokens: 800,
     };
     const resp = await fetch(url, {
       method: 'POST',
@@ -1930,6 +2182,7 @@
       const s = collectSettingsFromForm();
       saveSettings(s);
       scheduleCloudPush();
+      refreshComposerHint();
       alert('设置已保存');
       closeSettings();
     });
@@ -1974,6 +2227,44 @@
       }
     });
     $('sendBtn').addEventListener('click', handleSend);
+
+    // 多模态：附件 / 网页
+    const attachBtn = $('attachBtn');
+    if (attachBtn) attachBtn.addEventListener('click', () => { const fi = $('fileInput'); if (fi) fi.click(); });
+    const fileInput = $('fileInput');
+    if (fileInput) fileInput.addEventListener('change', (e) => { addFiles(e.target.files); e.target.value = ''; });
+    const webBtn = $('webBtn');
+    if (webBtn) webBtn.addEventListener('click', handleWebUrl);
+
+    // 输入框粘贴图片（Ctrl+V 截图）
+    const inputEl = $('input');
+    if (inputEl) inputEl.addEventListener('paste', (e) => {
+      const items = (e.clipboardData && e.clipboardData.items) || [];
+      const files = [];
+      for (const it of items) {
+        if (it.kind === 'file' && it.type && it.type.startsWith('image/')) {
+          const f = it.getAsFile();
+          if (f) files.push(f);
+        }
+      }
+      if (files.length) { e.preventDefault(); addFiles(files); }
+    });
+
+    // 拖拽文件到聊天区
+    const messagesEl = $('messages');
+    if (messagesEl) {
+      messagesEl.addEventListener('dragover', (e) => { e.preventDefault(); messagesEl.classList.add('drag-over'); });
+      messagesEl.addEventListener('dragleave', (e) => { if (e.target === messagesEl) messagesEl.classList.remove('drag-over'); });
+      messagesEl.addEventListener('drop', (e) => {
+        e.preventDefault();
+        messagesEl.classList.remove('drag-over');
+        if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+          addFiles(e.dataTransfer.files);
+        }
+      });
+    }
+
+    refreshComposerHint();
 
     // 点击空白处关闭消息操作条（撤回 / 修改）
     document.addEventListener('click', (e) => {
