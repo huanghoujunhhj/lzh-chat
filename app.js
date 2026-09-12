@@ -141,7 +141,7 @@
       icon: '🌟',
       baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
       model: 'qwen-vl-max',
-      hint: '阿里通义千问，支持图片/视频识别；想省费用可把模型改成 qwen-plus / qwen-max（纯文本）',
+      hint: '阿里通义千问，支持图片/视频。注意：DashScope 禁止浏览器直连（CORS），需把 Base URL 换成你部署的 Cloudflare Worker 代理地址（见仓库 cloudflare-worker.js 说明）',
     },
     {
       id: 'custom',
@@ -776,7 +776,7 @@
       addMessageToCurrent('assistant', reply);
     } catch (e) {
       console.error(e);
-      const errText = '啊…网络好像出问题了，刷新一下试试？';
+      const errText = '啊…出问题了：' + friendlyAiError(e);
       if (typingNode && typingNode.parentNode) {
         try { typingNode.remove(); } catch (e2) {}
       }
@@ -876,6 +876,19 @@
   function isRealAiActive() {
     const s = loadSettings();
     return realAiOn(s) && s.apiKey && s.baseUrl && s.model;
+  }
+
+  // 把 AI 调用报错翻译成人话，直接显示在聊天气泡里，方便定位问题
+  function friendlyAiError(e) {
+    const m = (e && e.message) ? String(e.message) : '未知错误';
+    if (/failed to fetch|networkerror|load failed/i.test(m)) {
+      return '浏览器连不上 AI 接口（网络不通，或被 CORS 跨域拦截）。阿里云 DashScope 不允许浏览器直连——请在「设置」里把 Base URL 换成你部署的 Cloudflare Worker 代理地址（见仓库 cloudflare-worker.js 的说明）。';
+    }
+    if (/401/.test(m)) return 'API 401：Key 无效或已过期，去阿里云百炼重新生成一个。';
+    if (/403/.test(m)) return 'API 403：没有权限，确认账号已开通百炼/模型服务，且模型名正确。';
+    if (/404/.test(m)) return 'API 404：Base URL 或模型名不对，检查设置（千问模型如 qwen-vl-max / qwen-plus）。';
+    if (/429/.test(m)) return 'API 429：请求太频繁或额度不足，稍后再试。';
+    return m.slice(0, 180);
   }
 
   function toast(msg) {
@@ -1075,7 +1088,7 @@
     } catch (e) {
       console.error(e);
       // 同样先落库再重渲染，避免这条回复成为"幽灵消息"在下次发送后消失
-      const errText = '啊…网络好像出问题了，刷新一下试试？';
+      const errText = '啊…出问题了：' + friendlyAiError(e);
       if (typingNode && typingNode.parentNode) {
         try { typingNode.remove(); } catch (e2) {}
       }
