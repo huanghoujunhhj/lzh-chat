@@ -119,11 +119,11 @@
     {
       id: 'zhipu',
       name: '智谱 GLM',
-      tag: 'GLM',
+      tag: '免费视觉',
       icon: '🧠',
       baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
-      model: 'glm-4-flash',
-      hint: '国产 GLM，免费额度大',
+      model: 'glm-4v-flash',
+      hint: '国产智谱，注册送 2000 万 Token，GLM-4V-Flash 视觉模型完全免费，支持图片。国内直连无需代理',
     },
     {
       id: 'siliconflow',
@@ -885,7 +885,8 @@
     if (m.includes('vl')) return true;               // qwen-vl-max, qwen-vl-plus, gpt-4o 等
     if (m.includes('gpt-4o')) return true;           // OpenAI GPT-4o 系列
     if (m.includes('kimi')) return true;             // kimi-k2.6 支持多模态
-    if (m.includes('glm-4v')) return true;           // 智谱视觉模型
+    if (m.includes('glm-4v')) return true;           // 智谱 GLM-4V 视觉模型
+    if (/glm-4[\w.-]*v/.test(m)) return true;        // 智谱 GLM-4.6V / 4.1V 等视觉变体
     return false;
   }
 
