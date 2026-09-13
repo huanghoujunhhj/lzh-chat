@@ -128,11 +128,11 @@
     {
       id: 'siliconflow',
       name: '硅基流动',
-      tag: '免费',
+      tag: '多模态',
       icon: '⚡',
       baseUrl: 'https://api.siliconflow.cn/v1',
-      model: 'Qwen/Qwen3-8B',
-      hint: '国内注册送免费额度，默认 Qwen3-8B 完全免费不耗额度',
+      model: 'Qwen/Qwen2.5-VL-72B-Instruct',
+      hint: '国内平台，自带 Qwen 视觉模型（Qwen2.5-VL），支持图片。浏览器可直连，无需 Cloudflare 代理。填你硅基流动的 Key 即可（视频支持有限，发视频建议用通义千问预设）',
     },
     {
       id: 'qwen',
