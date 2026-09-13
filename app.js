@@ -30,11 +30,29 @@
 
 【爱好】打排球，不怎么玩游戏
 
-回复风格要求：
-- 用简短、自然、符合人设的方式回复，但要有具体内容，别只回一两个字。
-- 可以用括号（动作）来描述你当下的神态、动作或小表情，例如（翻了个白眼）滚！、（拿起笔算了算）这题先移项就行。
-- 语气词不多，保持那种漫不经心又有点敷衍的感觉；聊正事时认真、话会变多。
-- 不要用"我是AI""作为助手"这类话开头。`;
+【绝对禁止】
+- 严禁说"对不起""抱歉""我是AI""作为助手""我会尽力""有什么可以帮你的""感谢您的理解"等客服/AI腔。
+- 严禁用"您"，必须用"你"。
+- 严禁解释、总结、保证、承诺、官方道歉。你不是客服，是活生生的初二女生。
+- 严禁在每句话开头加序号、 bullet point、或者像机器人一样分条列项。
+
+【回复风格要求】
+- 始终以第一人称"我"（刘梓菡）回复。你就是刘梓菡，不是AI。
+- 用简短、自然、口语化、符合初中女生语气的句子回复。日常闲聊控制在1-3句；有正事/认真讨论时可以长一些。
+- 可以用括号写动作、神态、小表情，例如：（翻了个白眼）滚。、（低头继续写作业）没空。、（愣了一下）啊？
+- 语气词不多，保持那种漫不经心又有点敷衍的感觉；被调侃时会怼回去；聊正事时认真、话会变多。
+- 根据对方语气自然切换：对方好好说话你也好好说；对方阴阳/调侃你就阴阳/怼回去；对方真生气了你就软一点但别道歉。
+
+【参考回复示例】
+- 对方问："在干嘛？" → （笔往桌上一扔）写数学作业呢，干嘛？
+- 对方说："这道题我不会" → （凑过来看了一眼）这题先移项啊，笨。看，这样……
+- 对方调侃："你是不是谈恋爱了" → （一下子坐直）你有病吧？谁谈恋爱了？
+- 对方说："我昨天找你不回" → （皱眉）我昨天手机被我妈收了，有事？
+- 对方说："你和你男朋友聊天聊的太开心了吧" → （把笔一摔）我哪来的男朋友？你别乱讲行吗。
+- 对方让你帮忙画图：→ （叹了口气）课题组的图是吧……行吧，你把要求发我。
+
+记住：你要像真实存在的初二女生一样回答，有情绪、有小动作、有口语，不要像AI。`;
+
   const DEFAULT_SYSTEM_PROMPT = DEFAULT_LZH_PERSONA;
 
   // 内置角色（不可删除；用户创建的角色在 localStorage 中）
@@ -1143,12 +1161,16 @@
     // 优先用当前角色的人设，其次 settings 里手动保存的，最后才是默认
     const ch = getCurrentCharacter();
     const persona = ch.persona || DEFAULT_SYSTEM_PROMPT;
-    let sys = settings.systemPrompt && settings.systemPrompt !== DEFAULT_SYSTEM_PROMPT
-      ? settings.systemPrompt
-      : persona;
+    // 始终以当前角色卡的 persona 为基底，保证人设不丢失；
+    // 用户在设置面板里填的 systemPrompt 只作为「补充规则」追加，不会覆盖角色人设。
+    let sys = persona;
+    const customPrompt = (settings.systemPrompt || '').trim();
+    if (customPrompt && customPrompt !== persona.trim()) {
+      sys += '\n\n【用户补充设定】' + customPrompt;
+    }
     // 分身独有的「特殊设定」（可选填）融入系统提示，让它真正影响对话
     if (ch.special) {
-      sys += '\n【特殊设定】' + ch.special;
+      sys += '\n\n【特殊设定】' + ch.special;
     }
     // 主动互动模式：此刻不是用户在提问，而是由分身主动发起互动
     if (opts && opts.proactive) {
@@ -1817,12 +1839,14 @@
     $('baseUrlInput').value = s.baseUrl || '';
     $('apiKeyInput').value = s.apiKey || '';
     $('modelInput').value = s.model || '';
-    // 默认显示当前角色人设；若用户曾保存过自定义 prompt 且不是默认，则用用户自定义的
-    const isDefaultPrompt = !s.systemPrompt || s.systemPrompt === DEFAULT_SYSTEM_PROMPT;
-    let shownPrompt = (isDefaultPrompt ? c.persona : s.systemPrompt) || DEFAULT_SYSTEM_PROMPT;
+    // 系统提示词框：以当前角色卡 persona 为基准；settings.systemPrompt 只作为「用户补充」追加显示
+    const personaText = (c.persona || '').trim();
+    const savedPrompt = (s.systemPrompt || '').trim();
+    const isDefaultPrompt = !savedPrompt || savedPrompt === personaText || savedPrompt === DEFAULT_SYSTEM_PROMPT.trim();
+    let shownPrompt = (isDefaultPrompt ? personaText : (personaText + '\n\n【用户补充设定】' + savedPrompt)) || DEFAULT_SYSTEM_PROMPT;
     // 若有「特殊设定」，在预览里一并展示（不影响 AI 模式下 callRealAI 的叠加）
-    if (isDefaultPrompt && c.special) {
-      shownPrompt += '\n【特殊设定】' + c.special;
+    if (c.special) {
+      shownPrompt += '\n\n【特殊设定】' + c.special;
     }
     $('systemPromptInput').value = shownPrompt;
     $('proactiveToggle').checked = !!s.proactiveEnabled;
@@ -1893,12 +1917,32 @@
   }
 
   function collectSettingsFromForm() {
+    const rawPrompt = ($('systemPromptInput').value || '').trim();
+    const c = getCurrentCharacter();
+    const personaText = (c.persona || '').trim();
+    const specialText = (c.special || '').trim();
+    // 系统提示词：以角色卡 persona 为底。如果用户没有额外改动（框里只剩 persona + special），
+    // 就不保存到 settings，避免角色卡更新后仍被旧 prompt 覆盖。
+    // 若用户在 persona 基础上追加了内容，只把追加部分存为「用户补充设定」。
+    let systemPrompt = '';
+    if (rawPrompt && rawPrompt !== personaText && rawPrompt !== DEFAULT_SYSTEM_PROMPT.trim()) {
+      let extra = rawPrompt;
+      // 去掉框里自动展示的 persona 和 special 部分，得到真正追加的内容
+      if (extra.startsWith(personaText)) extra = extra.slice(personaText.length).trim();
+      const specialMarker = '【特殊设定】' + specialText;
+      if (specialText && extra.includes(specialMarker)) {
+        extra = extra.replace(specialMarker, '').trim();
+      }
+      // 去掉可能残留的「用户补充设定」标记
+      extra = extra.replace(/^【用户补充设定】/i, '').trim();
+      if (extra) systemPrompt = extra;
+    }
     return {
       useRealAi: $('useRealAiToggle').checked,
       baseUrl: $('baseUrlInput').value.trim() || DEFAULT_SETTINGS.baseUrl,
       apiKey: $('apiKeyInput').value.trim(),
       model: $('modelInput').value.trim() || DEFAULT_SETTINGS.model,
-      systemPrompt: $('systemPromptInput').value || DEFAULT_SYSTEM_PROMPT,
+      systemPrompt,
       proactiveEnabled: $('proactiveToggle').checked,
       proactiveInterval: parseInt($('proactiveInterval').value, 10) || 90,
       cloudToken: ($('cloudTokenInput').value || '').trim(),
