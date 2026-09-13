@@ -141,7 +141,7 @@
       icon: '🌟',
       baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
       model: 'qwen-vl-max',
-      hint: '阿里通义千问，支持图片/视频。注意：DashScope 禁止浏览器直连（CORS），需把 Base URL 换成你部署的 Cloudflare Worker 代理地址（见仓库 cloudflare-worker.js 说明）',
+      hint: '阿里通义千问视觉模型 qwen-vl-max，支持图片/视频。注意：DashScope 禁止浏览器直连（CORS），需把 Base URL 换成你部署的 Cloudflare Worker 代理地址，并确保模型名是 VL 系列（如 qwen-vl-max）',
     },
     {
       id: 'custom',
@@ -878,9 +878,23 @@
     return realAiOn(s) && s.apiKey && s.baseUrl && s.model;
   }
 
+  // 判断当前模型是否支持图片/视频多模态（VL / Vision Language Model）
+  function isVisionModel(model) {
+    const m = String(model || '').toLowerCase();
+    if (!m) return false;
+    if (m.includes('vl')) return true;               // qwen-vl-max, qwen-vl-plus, gpt-4o 等
+    if (m.includes('gpt-4o')) return true;           // OpenAI GPT-4o 系列
+    if (m.includes('kimi')) return true;             // kimi-k2.6 支持多模态
+    if (m.includes('glm-4v')) return true;           // 智谱视觉模型
+    return false;
+  }
+
   // 把 AI 调用报错翻译成人话，直接显示在聊天气泡里，方便定位问题
   function friendlyAiError(e) {
     const m = (e && e.message) ? String(e.message) : '未知错误';
+    if (/20041/.test(m)) {
+      return '当前模型不支持图片/视频（错误码 20041）。请在「设置」里把模型名改成 qwen-vl-max（或 qwen-vl-plus），并确认 Base URL 指向 Cloudflare Worker 代理。';
+    }
     if (/failed to fetch|networkerror|load failed/i.test(m)) {
       return '浏览器连不上 AI 接口（网络不通，或被 CORS 跨域拦截）。阿里云 DashScope 不允许浏览器直连——请在「设置」里把 Base URL 换成你部署的 Cloudflare Worker 代理地址（见仓库 cloudflare-worker.js 的说明）。';
     }
@@ -1052,6 +1066,11 @@
       toast('请先在「设置」里开启真实 AI（千问等）再发送图片 / 视频 / 网页');
       return;
     }
+    // 多模态还要求当前模型本身是视觉模型（VLM）
+    if ((pendingAttachments.length || pendingWeb) && !isVisionModel(loadSettings().model)) {
+      toast('当前模型不支持图片/视频，请在「设置」里换成 qwen-vl-max 等视觉模型');
+      return;
+    }
 
     const attachments = pendingAttachments.slice();
     const web = pendingWeb || null;
@@ -1139,6 +1158,12 @@
     }
     // 叙事 / 旁白识别：用户用（注：…）或整段括号包裹时，那是旁白 / 第三人称，不是本人台词
     sys += '\n\n【叙事/旁白识别】如果用户的某条消息以「（注：」开头、或被整段括号包裹（例如动作、神态、场景描写、第三人称叙事），那不是用户本人直接对你说的话，而是旁白 / 第三人称叙事。请把它当作剧情或动作描写来理解，自然地融入角色扮演去回应或推进，不要误把旁白当成用户自己的台词来回答，也不要说"收到备注""看到了注释"这类出戏的话。保持刘梓菡的语气和性格。';
+    // 防御性检查：如果会话历史里包含图片/视频/网页，当前模型必须是 VLM
+    const hasAnyMultimodal = messages.some((m) => (m.attachments && m.attachments.length) || m.web);
+    if (hasAnyMultimodal && !isVisionModel(settings.model)) {
+      throw new Error('20041: 当前模型 ' + settings.model + ' 不是视觉模型（VLM），无法处理图片/视频/网页。请在设置里切换到 qwen-vl-max 等 VL 模型。');
+    }
+
     const payload = {
       model: settings.model,
       messages: [
